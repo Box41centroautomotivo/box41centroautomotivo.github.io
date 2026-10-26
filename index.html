@@ -193,7 +193,7 @@ function passos(status) {
 
 function cartaoOs(os) {
   const [rotulo, cor] = STATUS[os.status] || [os.status, "#9aa3af"];
-  const itens = os.itens.map((i) => `<tr><td>${esc(i.descricao)}${Number(i.quantidade) !== 1 ? ` <span class="meta">(${Number(i.quantidade).toLocaleString("pt-BR")}x)</span>` : ""}</td><td class="valor">${reais(i.valor)}</td></tr>`).join("");
+  const itens = os.itens.map((i) => `<tr><td>${esc(i.descricao)}${Number(i.quantidade) !== 1 ? ` <span class="meta">(${Number(i.quantidade).toLocaleString("pt-BR")}x)</span>` : ""}${i.garantia_ate ? `<br><span class="meta">Garantia até ${data(i.garantia_ate)}</span>` : ""}</td><td class="valor">${reais(i.valor)}</td></tr>`).join("");
   const desconto = Number(os.desconto) > 0 ? `<tr><td>Desconto</td><td class="valor">-${reais(os.desconto)}</td></tr>` : "";
   let avaliacao = "";
   if (os.status === "entregue") {
