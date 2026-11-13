@@ -27,12 +27,12 @@
   <script>
     // Versão desta página (trocada na publicação). O Safari e o app na tela inicial do iPhone guardam a página antiga:
     // ao abrir, confere a versão publicada (sem cache) e, se saiu outra, recarrega com a nova.
-    var VERSAO = '5.30.1';
+    var VERSAO = '5.30.2';
     function mostrar(t) { var m = document.getElementById('msg'); if (m) m.innerHTML = t; }
     // Log de erros (Supabase, tabela erro_app): grava quando a página não abre, com o modelo do aparelho e a versão.
     var reportados = 0;
     function reportar(msg) {
-      if (++reportados > 5) return;  // no máximo 5 por abertura da página
+      if (++reportados > 10) return;  // no máximo 10 por abertura da página
       try {
         fetch('https://sgzcsdsdjuspcdaxxggb.supabase.co/rest/v1/rpc/registrar_erro', {
           method: 'POST',
@@ -50,6 +50,19 @@
       reportar('Falha ao abrir: ' + ((e.reason && e.reason.message) || e.reason));
       if (document.getElementById('carregando')) mostrar('Não foi possível abrir o OficinaControl.<br><small>' + ((e.reason && e.reason.message) || e.reason) + '</small><br><br>Feche e abra de novo. Se continuar, avise o suporte com esta mensagem.');
     });
+    // Erros que o app escreve só no console (falha ao desenhar a tela, por exemplo) também vão para o log.
+    (function () {
+      ['error', 'warn'].forEach(function (nivel) {
+        var orig = console[nivel];
+        console[nivel] = function () {
+          try {
+            var t = Array.prototype.map.call(arguments, function (a) { return a && a.stack ? a.stack : String(a); }).join(' ');
+            if (nivel === 'error' || /exception|error|falh/i.test(t)) reportar('Console (' + nivel + '): ' + t.slice(0, 800));
+          } catch (e) {}
+          return orig.apply(console, arguments);
+        };
+      });
+    })();
     // Tela branca no iPhone: o app desenha numa área WebGL. Grava se ela não abrir ou se perder (memória de vídeo)
     // e, no iPhone/iPad, um retrato da tela uns segundos depois de abrir.
     (function () {
@@ -72,8 +85,15 @@
         if (document.getElementById('carregando')) return;
         var raiz = document.body.shadowRoot || document;
         var c = raiz.querySelector('canvas') || document.querySelector('canvas');
+        var gpu = '?', pos = '?';
+        try {
+          var g = c && (c.getContext('webgl2') || c.getContext('webgl'));
+          var ext = g && g.getExtension('WEBGL_debug_renderer_info');
+          gpu = g ? (ext ? g.getParameter(ext.UNMASKED_RENDERER_WEBGL) : g.getParameter(g.RENDERER)) + (g.isContextLost() ? ' PERDIDO' : '') : 'sem contexto';
+          var r = c && c.getBoundingClientRect(); pos = r ? Math.round(r.left) + ',' + Math.round(r.top) + ' ' + Math.round(r.width) + 'x' + Math.round(r.height) : '?';
+        } catch (e) { gpu = 'erro: ' + e; }
         reportar('Diagnóstico iPhone: tela ' + innerWidth + 'x' + innerHeight + ', dpr ' + devicePixelRatio +
-          ', canvas ' + (c ? c.width + 'x' + c.height : 'nenhum'));
+          ', canvas ' + (c ? c.width + 'x' + c.height : 'nenhum') + ', posição ' + pos + ', gpu ' + gpu);
       }, 8000);
     })();
     (function () {
