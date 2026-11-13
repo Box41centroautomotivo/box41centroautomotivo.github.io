@@ -87,12 +87,10 @@
 <main>
   <section id="entrar" class="cartao">
     <h2>Consultar minhas OS</h2>
-    <p class="dica">Use o CPF ou CNPJ do seu cadastro e a placa de um dos seus veículos.</p>
+    <p class="dica">Use o CPF ou CNPJ do seu cadastro na oficina.</p>
     <form id="form-entrar" novalidate>
       <label for="doc">CPF ou CNPJ</label>
       <input id="doc" inputmode="numeric" autocomplete="off" placeholder="000.000.000-00" maxlength="18" required>
-      <label for="placa">Placa do veículo</label>
-      <input id="placa" autocomplete="off" autocapitalize="characters" placeholder="ABC1D23" maxlength="8" required>
       <button class="principal" id="btn-entrar" type="submit">Ver minhas OS</button>
       <p class="erro" id="erro-entrar" role="alert" hidden></p>
     </form>
@@ -140,7 +138,6 @@ $("doc").addEventListener("input", (e) => {
     ? d.replace(/(\d{3})(\d)/, "$1.$2").replace(/(\d{3})(\d)/, "$1.$2").replace(/(\d{3})(\d{1,2})$/, "$1-$2")
     : d.replace(/^(\d{2})(\d)/, "$1.$2").replace(/^(\d{2})\.(\d{3})(\d)/, "$1.$2.$3").replace(/\.(\d{3})(\d)/, ".$1/$2").replace(/(\d{4})(\d)/, "$1-$2");
 });
-$("placa").addEventListener("input", (e) => { e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, ""); });
 
 async function rpc(funcao, corpo) {
   const r = await fetch(`${SUPABASE}/rest/v1/rpc/${funcao}`, {
@@ -152,10 +149,11 @@ async function rpc(funcao, corpo) {
   return r.json();
 }
 
-async function carregar(doc, placa) {
-  const r = await rpc("portal_os", { p_documento: doc, p_placa: placa });
+async function carregar(doc) {
+  // Só o CPF/CNPJ: a placa não é mais pedida (o parâmetro segue vazio).
+  const r = await rpc("portal_os", { p_documento: doc, p_placa: "" });
   if (r.erro) throw new Error(r.erro);
-  acesso = { doc, placa };
+  acesso = { doc, placa: "" };
   try { sessionStorage.setItem("box41_acesso", JSON.stringify(acesso)); } catch (_) {}
   dados = r;
   mostrar();
@@ -163,13 +161,12 @@ async function carregar(doc, placa) {
 
 $("form-entrar").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const doc = so($("doc").value), placa = $("placa").value.replace(/-/g, "");
+  const doc = so($("doc").value);
   const erro = $("erro-entrar"), btn = $("btn-entrar");
   erro.hidden = true;
   if (![11, 14].includes(doc.length)) { erro.textContent = "Digite o CPF (11 números) ou o CNPJ (14 números)."; erro.hidden = false; return; }
-  if (placa.length !== 7) { erro.textContent = "Digite a placa com 7 caracteres, ex.: ABC1D23."; erro.hidden = false; return; }
   btn.disabled = true; btn.textContent = "Buscando...";
-  try { await carregar(doc, placa); }
+  try { await carregar(doc); }
   catch (err) { erro.textContent = err.message; erro.hidden = false; }
   finally { btn.disabled = false; btn.textContent = "Ver minhas OS"; }
 });
@@ -178,7 +175,7 @@ $("sair").addEventListener("click", () => {
   try { sessionStorage.removeItem("box41_acesso"); } catch (_) {}
   dados = acesso = null;
   $("painel").hidden = true; $("entrar").hidden = false;
-  $("doc").value = ""; $("placa").value = "";
+  $("doc").value = "";
 });
 
 for (const [id, nome] of [["aba-andamento", "andamento"], ["aba-anteriores", "anteriores"]]) {
@@ -267,13 +264,13 @@ $("lista").addEventListener("submit", async (e) => {
   try {
     const r = await rpc("portal_avaliar", { p_documento: acesso.doc, p_placa: acesso.placa, p_os_id: Number(form.dataset.os), p_nota: nota, p_comentario: form.querySelector("textarea").value });
     if (r.erro) throw new Error(r.erro);
-    await carregar(acesso.doc, acesso.placa);
+    await carregar(acesso.doc);
   } catch (err) { erro.textContent = err.message; erro.hidden = false; btn.disabled = false; btn.textContent = "Enviar avaliação"; }
 });
 
 try {
   const salvo = JSON.parse(sessionStorage.getItem("box41_acesso") || "null");
-  if (salvo) carregar(salvo.doc, salvo.placa).catch(() => {});
+  if (salvo) carregar(salvo.doc).catch(() => {});
 } catch (_) {}
 </script>
 </body>
