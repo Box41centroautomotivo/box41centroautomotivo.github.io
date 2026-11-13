@@ -27,15 +27,55 @@
   <script>
     // Versão desta página (trocada na publicação). O Safari e o app na tela inicial do iPhone guardam a página antiga:
     // ao abrir, confere a versão publicada (sem cache) e, se saiu outra, recarrega com a nova.
-    var VERSAO = '5.29';
+    var VERSAO = '5.30';
     function mostrar(t) { var m = document.getElementById('msg'); if (m) m.innerHTML = t; }
+    // Log de erros (Supabase, tabela erro_app): grava quando a página não abre, com o modelo do aparelho e a versão.
+    var reportados = 0;
+    function reportar(msg) {
+      if (++reportados > 5) return;  // no máximo 5 por abertura da página
+      try {
+        fetch('https://sgzcsdsdjuspcdaxxggb.supabase.co/rest/v1/rpc/registrar_erro', {
+          method: 'POST', keepalive: true,
+          headers: { 'Content-Type': 'application/json', apikey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNnemNzZHNkanVzcGNkYXh4Z2diIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI4NjI0MTUsImV4cCI6MjEwODQzODQxNX0.0LobydfLKEfC9XZdBGOIN88ycAapcEosOxLHa3rz1Yg', Authorization: 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNnemNzZHNkanVzcGNkYXh4Z2diIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI4NjI0MTUsImV4cCI6MjEwODQzODQxNX0.0LobydfLKEfC9XZdBGOIN88ycAapcEosOxLHa3rz1Yg' },
+          body: JSON.stringify({ p: { versao: VERSAO, plataforma: 'web: ' + navigator.userAgent, tela: 'Abertura da página', mensagem: String(msg).slice(0, 900) } })
+        }).catch(function () {});
+      } catch (e) {}
+    }
     // Se o app não carregar, mostra o motivo em vez de ficar parado em "Carregando".
     window.addEventListener('error', function (e) {
+      reportar('Erro ao abrir: ' + (e.message || e) + (e.filename ? ' (' + e.filename + ':' + e.lineno + ')' : ''));
       if (document.getElementById('carregando')) mostrar('Não foi possível abrir o OficinaControl.<br><small>' + (e.message || e) + '</small><br><br>Feche e abra de novo. Se continuar, avise o suporte com esta mensagem.');
     });
     window.addEventListener('unhandledrejection', function (e) {
+      reportar('Falha ao abrir: ' + ((e.reason && e.reason.message) || e.reason));
       if (document.getElementById('carregando')) mostrar('Não foi possível abrir o OficinaControl.<br><small>' + ((e.reason && e.reason.message) || e.reason) + '</small><br><br>Feche e abra de novo. Se continuar, avise o suporte com esta mensagem.');
     });
+    // Tela branca no iPhone: o app desenha numa área WebGL. Grava se ela não abrir ou se perder (memória de vídeo)
+    // e, no iPhone/iPad, um retrato da tela uns segundos depois de abrir.
+    (function () {
+      try {
+        var orig = HTMLCanvasElement.prototype.getContext;
+        HTMLCanvasElement.prototype.getContext = function (tipo, op) {
+          var ctx = orig.call(this, tipo, op);
+          if (/webgl/.test(String(tipo))) {
+            if (!ctx) reportar('WebGL não abriu (' + tipo + ')');
+            else if (!this.__vigiado) {
+              this.__vigiado = true;
+              this.addEventListener('webglcontextlost', function () { reportar('WebGL perdido (memória de vídeo?)'); });
+            }
+          }
+          return ctx;
+        };
+      } catch (e) {}
+      var ios = /iPhone|iPad/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      if (ios) setTimeout(function () {
+        if (document.getElementById('carregando')) return;
+        var raiz = document.body.shadowRoot || document;
+        var c = raiz.querySelector('canvas') || document.querySelector('canvas');
+        reportar('Diagnóstico iPhone: tela ' + innerWidth + 'x' + innerHeight + ', dpr ' + devicePixelRatio +
+          ', canvas ' + (c ? c.width + 'x' + c.height : 'nenhum'));
+      }, 8000);
+    })();
     (function () {
       try {
         fetch('versao.txt?t=' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.text() : ''; }).then(function (v) {
@@ -48,10 +88,15 @@
     (function () {
       var ok = typeof WebAssembly === 'object' && WebAssembly.validate(new Uint8Array([0,97,115,109,1,0,0,0,1,5,1,95,1,120,0]));
       if (!ok) {
+        reportar('Navegador sem WebAssembly GC (antigo)');
         mostrar('Este navegador é antigo para o OficinaControl.<br>No iPhone, atualize o iOS (Ajustes › Geral › Atualização de Software) e abra de novo no Safari.');
         return;
       }
-      var s = document.createElement('script'); s.src = 'oficina.js?v=' + VERSAO; document.body.appendChild(s);
+      var s0 = document.createElement('script');
+      s0.onerror = function () { reportar('Não baixou oficina.js'); mostrar('Não foi possível baixar o OficinaControl. Confira a internet e abra de novo.'); };
+      s0.src = 'oficina.js?v=' + VERSAO; document.body.appendChild(s0);
+      // Tela parada em "Carregando" (ou em branco) por muito tempo: grava para descobrir o motivo.
+      setTimeout(function () { if (document.getElementById('carregando')) reportar('Ainda carregando depois de 40 s'); }, 40000);
     })();
   </script>
 </body>
