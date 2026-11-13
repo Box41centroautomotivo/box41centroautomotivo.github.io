@@ -27,7 +27,7 @@
   <script>
     // Versão desta página (trocada na publicação). O Safari e o app na tela inicial do iPhone guardam a página antiga:
     // ao abrir, confere a versão publicada (sem cache) e, se saiu outra, recarrega com a nova.
-    var VERSAO = '5.30.2';
+    var VERSAO = '5.30.3';
     function mostrar(t) { var m = document.getElementById('msg'); if (m) m.innerHTML = t; }
     // Log de erros (Supabase, tabela erro_app): grava quando a página não abre, com o modelo do aparelho e a versão.
     var reportados = 0;
@@ -66,6 +66,25 @@
     // Tela branca no iPhone: o app desenha numa área WebGL. Grava se ela não abrir ou se perder (memória de vídeo)
     // e, no iPhone/iPad, um retrato da tela uns segundos depois de abrir.
     (function () {
+      // Contadores: quantos quadros o app pediu, quantos desenhos fez na área WebGL e a cor de um ponto no meio da tela.
+      var st = { raf: 0, draws: 0, clears: 0, pixel: '-', attrs: '-' }, glAtual = null;
+      try {
+        var origRaf = window.requestAnimationFrame;
+        window.requestAnimationFrame = function (cb) {
+          return origRaf.call(window, function (t) {
+            st.raf++;
+            var r = cb(t);
+            if (glAtual && (st.raf <= 3 || st.raf % 20 === 0)) {
+              try {
+                var px = new Uint8Array(4);
+                glAtual.readPixels(glAtual.drawingBufferWidth >> 1, glAtual.drawingBufferHeight >> 1, 1, 1, glAtual.RGBA, glAtual.UNSIGNED_BYTE, px);
+                st.pixel = Array.prototype.join.call(px, '.');
+              } catch (e) { st.pixel = 'erro ' + e; }
+            }
+            return r;
+          });
+        };
+      } catch (e) {}
       try {
         var orig = HTMLCanvasElement.prototype.getContext;
         HTMLCanvasElement.prototype.getContext = function (tipo, op) {
@@ -75,11 +94,21 @@
             else if (!this.__vigiado) {
               this.__vigiado = true;
               this.addEventListener('webglcontextlost', function () { reportar('WebGL perdido (memória de vídeo?)'); });
+              ['drawElements', 'drawArrays', 'clear'].forEach(function (n) {
+                var o = ctx[n];
+                if (typeof o === 'function') ctx[n] = function () { if (n === 'clear') st.clears++; else st.draws++; return o.apply(ctx, arguments); };
+              });
+              glAtual = ctx;
+              try { st.attrs = JSON.stringify(ctx.getContextAttributes()); } catch (e) {}
             }
           }
           return ctx;
         };
       } catch (e) {}
+      window.__diagTela = function () {
+        return ', quadros ' + st.raf + ', desenhos ' + st.draws + ', limpezas ' + st.clears + ', pixel do meio ' + st.pixel +
+          (glAtual ? ', erroGL ' + glAtual.getError() : '') + ', webgl ' + st.attrs;
+      };
       var ios = /iPhone|iPad/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
       if (ios) setTimeout(function () {
         if (document.getElementById('carregando')) return;
@@ -93,7 +122,7 @@
           var r = c && c.getBoundingClientRect(); pos = r ? Math.round(r.left) + ',' + Math.round(r.top) + ' ' + Math.round(r.width) + 'x' + Math.round(r.height) : '?';
         } catch (e) { gpu = 'erro: ' + e; }
         reportar('Diagnóstico iPhone: tela ' + innerWidth + 'x' + innerHeight + ', dpr ' + devicePixelRatio +
-          ', canvas ' + (c ? c.width + 'x' + c.height : 'nenhum') + ', posição ' + pos + ', gpu ' + gpu);
+          ', canvas ' + (c ? c.width + 'x' + c.height : 'nenhum') + ', posição ' + pos + ', gpu ' + gpu + window.__diagTela());
       }, 8000);
     })();
     (function () {
