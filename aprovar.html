@@ -125,6 +125,9 @@ function mostrar(msg) {
     <section class="cartao">
       <h2>Olá${dados.cliente ? ", " + esc(dados.cliente) : ""}!</h2>
       <p class="meta">OS #${dados.numero}${dados.veiculo ? " · " + esc(dados.veiculo) : ""}</p>
+      ${dados.km ? `<p class="meta">Km na entrada: ${Number(dados.km).toLocaleString("pt-BR")}</p>` : ""}
+      ${dados.defeito ? `<p class="meta">Defeito informado: ${esc(dados.defeito)}</p>` : ""}
+      <p class="meta"><b>${dados.itens.filter((i) => i.aprovacao !== "pendente").length} de ${dados.itens.length + dados.recusados.length} itens aprovados</b></p>
       ${!dados.pode_aprovar ? `<p class="erro">Esta OS já foi encerrada; não é mais possível responder por aqui.</p>`
         : pend.length ? `<p class="meta">Toque em <b>Aprovo</b> ou <b>Não quero</b> em cada item e depois em <b>Enviar resposta</b>.</p>
           <div class="rapido"><button type="button" class="secundario" id="todos">Aprovar todos</button></div>`
