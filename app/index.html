@@ -27,7 +27,7 @@
   <script>
     // Versão desta página (trocada na publicação). O Safari e o app na tela inicial do iPhone guardam a página antiga:
     // ao abrir, confere a versão publicada (sem cache) e, se saiu outra, recarrega com a nova.
-    var VERSAO = '5.30';
+    var VERSAO = '5.30.1';
     function mostrar(t) { var m = document.getElementById('msg'); if (m) m.innerHTML = t; }
     // Log de erros (Supabase, tabela erro_app): grava quando a página não abre, com o modelo do aparelho e a versão.
     var reportados = 0;
@@ -35,7 +35,7 @@
       if (++reportados > 5) return;  // no máximo 5 por abertura da página
       try {
         fetch('https://sgzcsdsdjuspcdaxxggb.supabase.co/rest/v1/rpc/registrar_erro', {
-          method: 'POST', keepalive: true,
+          method: 'POST',
           headers: { 'Content-Type': 'application/json', apikey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNnemNzZHNkanVzcGNkYXh4Z2diIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI4NjI0MTUsImV4cCI6MjEwODQzODQxNX0.0LobydfLKEfC9XZdBGOIN88ycAapcEosOxLHa3rz1Yg', Authorization: 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNnemNzZHNkanVzcGNkYXh4Z2diIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI4NjI0MTUsImV4cCI6MjEwODQzODQxNX0.0LobydfLKEfC9XZdBGOIN88ycAapcEosOxLHa3rz1Yg' },
           body: JSON.stringify({ p: { versao: VERSAO, plataforma: 'web: ' + navigator.userAgent, tela: 'Abertura da página', mensagem: String(msg).slice(0, 900) } })
         }).catch(function () {});
