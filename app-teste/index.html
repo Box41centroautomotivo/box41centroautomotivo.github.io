@@ -29,11 +29,35 @@
   <script>
     // Versão desta página (trocada na publicação). O Safari e o app na tela inicial do iPhone guardam a página antiga:
     // ao abrir, confere a versão publicada (sem cache) e, se saiu outra, recarrega com a nova.
-    var VERSAO = '5.34.3-teste';
+    var VERSAO = '5.34.4-teste';
     var IOS = /iPhone|iPad/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-    // Opções do endereço (usadas na página de teste): isca=0, desloc=0, a11y=0, teste=campos, seguro=1.
+    // Opções do endereço (usadas na página de teste): isca=0|pd, desloc=0, a11y=0, teste=campos, seguro=1, diag=0, css=0,
+    // semext=bvbi,multidraw,todas (ou nomes de extensões WebGL). Sem opção, a página funciona como sempre.
     var OPCOES = {};
     try { new URLSearchParams(location.search).forEach(function (v, k) { OPCOES[k] = v; }); } catch (e) {}
+    // ?css=0: tira a trava da página (body fixo), como era até a 5.34.
+    if (OPCOES.css === '0') document.body.style.position = 'static';
+    // ?semext=...: esconde extensões do WebGL antes do app abrir (teste do desenho que perde a posição no iPhone).
+    // getExtension e getSupportedExtensions são filtrados juntos, senão o carregador do app se confunde.
+    (function () {
+      if (!OPCOES.semext) return;
+      var grupos = {
+        bvbi: ['WEBGL_draw_instanced_base_vertex_base_instance', 'WEBGL_multi_draw_instanced_base_vertex_base_instance'],
+        multidraw: ['WEBGL_multi_draw', 'WEBGL_multi_draw_instanced_base_vertex_base_instance']
+      };
+      var todas = false, esconder = {};
+      OPCOES.semext.split(',').forEach(function (n) {
+        n = n.trim(); if (n === 'todas') todas = true;
+        (grupos[n] || [n]).forEach(function (x) { esconder[x.toLowerCase()] = true; });
+      });
+      var bloqueada = function (n) { return todas || esconder[String(n).toLowerCase()] === true; };
+      [window.WebGLRenderingContext, window.WebGL2RenderingContext].forEach(function (K) {
+        if (!K) return;
+        var p = K.prototype, ge = p.getExtension, gs = p.getSupportedExtensions;
+        p.getExtension = function (n) { return bloqueada(n) ? null : ge.call(this, n); };
+        p.getSupportedExtensions = function () { var l = gs.call(this); return l ? l.filter(function (n) { return !bloqueada(n); }) : l; };
+      });
+    })();
     function mostrar(t) { var m = document.getElementById('msg'); if (m) m.innerHTML = t; }
     // Log de erros (Supabase, tabela erro_app): grava quando a página não abre, com o modelo do aparelho e a versão.
     // "reservado": não conta no limite (usado só pelo relatório do teclado, que sai uma vez).
@@ -188,9 +212,24 @@
           }
           return false;
         };
+        // Quem tira o foco da isca (o teclado não abria e ela perdia o foco 2 ms depois): grava o elemento que ficou com ele.
+        var descrever = function (el) {
+          if (!el) return 'nada';
+          return (el.tagName || '?').toLowerCase() + (el.id ? '#' + el.id : '') + (el.getAttribute && el.getAttribute('role') ? '/' + el.getAttribute('role') : '');
+        };
+        isca.addEventListener('blur', function (e) {
+          var rel = descrever(e.relatedTarget);
+          setTimeout(function () {
+            var el = document.activeElement;
+            while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
+            registrar('ib', ' ' + rel + '>' + descrever(el));
+          }, 0);
+        });
         window.addEventListener('touchend', function (e) {
           var t = e.changedTouches && e.changedTouches[0];
           if (!t || campoComFoco() || !sobreCampo(t.clientX, t.clientY)) return;
+          // ?isca=pd: impede o clique "de mentira" que o iPhone gera depois do toque (ele pode tirar o foco da isca).
+          if (OPCOES.isca === 'pd' && e.cancelable) e.preventDefault();
           // Na altura do dedo: o Safari não tem motivo para rolar a página até a isca.
           isca.style.left = Math.max(0, Math.min(window.innerWidth - 2, t.clientX)) + 'px';
           isca.style.top = Math.max(0, Math.min(window.innerHeight - 2, t.clientY)) + 'px';
@@ -216,7 +255,9 @@
     (function () {
       // Contadores: quantos quadros o app pediu, quantos desenhos fez na área WebGL e a cor de um ponto no meio da tela.
       var st = { raf: 0, draws: 0, clears: 0, pixel: '-', attrs: '-' }, glAtual = null;
-      try {
+      // ?diag=0: não mexe nos quadros nem nos desenhos do app (só avisa se o WebGL não abrir), para ver se a medição atrapalha.
+      var medir = OPCOES.diag !== '0';
+      if (medir) try {
         var origRaf = window.requestAnimationFrame;
         window.requestAnimationFrame = function (cb) {
           return origRaf.call(window, function (t) {
@@ -239,7 +280,7 @@
           var ctx = orig.call(this, tipo, op);
           if (/webgl/.test(String(tipo))) {
             if (!ctx) reportar('WebGL não abriu (' + tipo + ')');
-            else if (!this.__vigiado) {
+            else if (medir && !this.__vigiado) {
               this.__vigiado = true;
               this.addEventListener('webglcontextlost', function () { reportar('WebGL perdido (memória de vídeo?)'); });
               ['drawElements', 'drawArrays', 'clear'].forEach(function (n) {
@@ -261,15 +302,21 @@
         if (document.getElementById('carregando')) return;
         var raiz = document.body.shadowRoot || document;
         var c = raiz.querySelector('canvas') || document.querySelector('canvas');
-        var gpu = '?', pos = '?';
+        var gpu = '?', pos = '?', exts = '?';
         try {
           var g = c && (c.getContext('webgl2') || c.getContext('webgl'));
+          try { exts = (g.getSupportedExtensions() || []).join(' '); } catch (e) { exts = 'erro: ' + e; }
           var ext = g && g.getExtension('WEBGL_debug_renderer_info');
           gpu = g ? (ext ? g.getParameter(ext.UNMASKED_RENDERER_WEBGL) : g.getParameter(g.RENDERER)) + (g.isContextLost() ? ' PERDIDO' : '') : 'sem contexto';
           var r = c && c.getBoundingClientRect(); pos = r ? Math.round(r.left) + ',' + Math.round(r.top) + ' ' + Math.round(r.width) + 'x' + Math.round(r.height) : '?';
         } catch (e) { gpu = 'erro: ' + e; }
         reportar('Diagnóstico iPhone: tela ' + innerWidth + 'x' + innerHeight + ', dpr ' + devicePixelRatio +
-          ', canvas ' + (c ? c.width + 'x' + c.height : 'nenhum') + ', posição ' + pos + ', gpu ' + gpu + window.__diagTela());
+          ', canvas ' + (c ? c.width + 'x' + c.height : 'nenhum') + ', posição ' + pos + ', gpu ' + gpu + window.__diagTela() +
+          (location.search ? ', ' + location.search.slice(0, 80) : ''));
+        // As extensões que o app enxerga (para comparar com o Android e ver o efeito do ?semext).
+        // Em partes de até 800 letras: o log guarda no máximo 900 por linha.
+        var cab = 'Extensões WebGL iPhone' + (location.search ? ' ' + location.search.slice(0, 60) : '') + ': ';
+        for (var i = 0; i === 0 || i < exts.length; i += 800) reportar(cab + exts.slice(i, i + 800));
       }, 8000);
     })();
     (function () {
