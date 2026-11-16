@@ -1,0 +1,9 @@
+{
+  "name": "OficinaControl",
+  "short_name": "OficinaControl",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#111111",
+  "theme_color": "#111111",
+  "icons": [{ "src": "icone.png", "sizes": "512x512", "type": "image/png" }]
+}

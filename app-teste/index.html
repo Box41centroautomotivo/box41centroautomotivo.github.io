@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="OficinaControl">
+  <meta name="theme-color" content="#111111">
+  <title>OficinaControl</title>
+  <link rel="apple-touch-icon" href="icone.png">
+  <link rel="icon" href="icone.png">
+  <link rel="manifest" href="manifest.json">
+  <style>
+    html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #111; overscroll-behavior: none; }
+    /* iPhone: a página não rola e a altura não muda; com o teclado aberto ela é deslocada para cima (script). */
+    body { position: fixed; top: 0; left: 0; right: 0; }
+    #carregando { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+      color: #eee; font-family: -apple-system, system-ui, sans-serif; gap: 16px; text-align: center; padding: 24px; }
+    #carregando img { width: 120px; }
+  </style>
+</head>
+<body>
+  <div id="carregando">
+    <img src="logo.png" alt="">
+    <div id="msg">Carregando o OficinaControl...</div>
+  </div>
+  <script>
+    // Versão desta página (trocada na publicação). O Safari e o app na tela inicial do iPhone guardam a página antiga:
+    // ao abrir, confere a versão publicada (sem cache) e, se saiu outra, recarrega com a nova.
+    var VERSAO = '5.34.3-teste';
+    var IOS = /iPhone|iPad/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    // Opções do endereço (usadas na página de teste): isca=0, desloc=0, a11y=0, teste=campos, seguro=1.
+    var OPCOES = {};
+    try { new URLSearchParams(location.search).forEach(function (v, k) { OPCOES[k] = v; }); } catch (e) {}
+    function mostrar(t) { var m = document.getElementById('msg'); if (m) m.innerHTML = t; }
+    // Log de erros (Supabase, tabela erro_app): grava quando a página não abre, com o modelo do aparelho e a versão.
+    // "reservado": não conta no limite (usado só pelo relatório do teclado, que sai uma vez).
+    var reportados = 0;
+    function reportar(msg, tela, reservado) {
+      if (!reservado && ++reportados > 10) return;  // no máximo 10 por abertura da página
+      try {
+        fetch('https://sgzcsdsdjuspcdaxxggb.supabase.co/rest/v1/rpc/registrar_erro', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', apikey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNnemNzZHNkanVzcGNkYXh4Z2diIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI4NjI0MTUsImV4cCI6MjEwODQzODQxNX0.0LobydfLKEfC9XZdBGOIN88ycAapcEosOxLHa3rz1Yg', Authorization: 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNnemNzZHNkanVzcGNkYXh4Z2diIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI4NjI0MTUsImV4cCI6MjEwODQzODQxNX0.0LobydfLKEfC9XZdBGOIN88ycAapcEosOxLHa3rz1Yg' },
+          body: JSON.stringify({ p: { versao: VERSAO, plataforma: 'web: ' + navigator.userAgent, tela: tela || 'Abertura da página', mensagem: String(msg).slice(0, 900) } })
+        }).catch(function () {});
+      } catch (e) {}
+    }
+    // Se o app não carregar, mostra o motivo em vez de ficar parado em "Carregando".
+    window.addEventListener('error', function (e) {
+      reportar('Erro ao abrir: ' + (e.message || e) + (e.filename ? ' (' + e.filename + ':' + e.lineno + ')' : ''));
+      if (document.getElementById('carregando')) mostrar('Não foi possível abrir o OficinaControl.<br><small>' + (e.message || e) + '</small><br><br>Feche e abra de novo. Se continuar, avise o suporte com esta mensagem.');
+    });
+    window.addEventListener('unhandledrejection', function (e) {
+      reportar('Falha ao abrir: ' + ((e.reason && e.reason.message) || e.reason));
+      if (document.getElementById('carregando')) mostrar('Não foi possível abrir o OficinaControl.<br><small>' + ((e.reason && e.reason.message) || e.reason) + '</small><br><br>Feche e abra de novo. Se continuar, avise o suporte com esta mensagem.');
+    });
+    // Erros que o app escreve só no console (falha ao desenhar a tela, por exemplo) também vão para o log.
+    (function () {
+      ['error', 'warn'].forEach(function (nivel) {
+        var orig = console[nivel];
+        console[nivel] = function () {
+          try {
+            var t = Array.prototype.map.call(arguments, function (a) { return a && a.stack ? a.stack : String(a); }).join(' ');
+            if (nivel === 'error' || /exception|error|falh/i.test(t)) reportar('Console (' + nivel + '): ' + t.slice(0, 800));
+          } catch (e) {}
+          return orig.apply(console, arguments);
+        };
+      });
+    })();
+    // Teclado do iPhone (página 5.34.2). Com o teclado aberto, um campo na metade de baixo fica atrás dele e o Safari
+    // empurrava a página (o app subia e sumia). Aqui a página inteira é deslocada para cima só o necessário para o campo
+    // com foco ficar acima do teclado. O tamanho da área do app NÃO muda (mudar fazia o login se rearrumar e o toque cair
+    // em outro campo). Só no iPhone/iPad; Android e computador ficam como estavam.
+    (function () {
+      var vv = window.visualViewport;
+      if (!IOS || !vv) return;
+      var deslocLigado = OPCOES.desloc !== '0';
+      var MARGEM = 12;  // folga entre o fundo do campo e o teclado
+      var BARRA = 80;   // diferença de altura menor que isso é a barra do Safari, não o teclado
+      var TREMOR = 2;   // mudanças de até 2 px são ignoradas
+      var raf = window.requestAnimationFrame.bind(window);  // o original (o diagnóstico abaixo o substitui)
+      var desloc = 0, pendente = false, alturaCheia = window.innerHeight;
+      // Registro de diagnóstico: só números (nunca o texto digitado), no máximo 18 linhas, enviado uma vez.
+      var inicio = 0, linhas = [], enviado = false, ultimo = {};
+      var registrar = function (tipo, extra) {
+        if (!inicio || enviado || linhas.length >= 18) return;
+        // O mesmo evento chega pelo document e pelo app (shadowRoot): grava uma vez só.
+        var agora = performance.now(), chave = tipo + (extra || '');
+        if (ultimo.chave === chave && agora - ultimo.t < 50) return;
+        ultimo = { chave: chave, t: agora };
+        var c = campoComFoco(), cv = canvasApp();
+        var fundo = c && cv ? Math.round(c.getBoundingClientRect().bottom - cv.getBoundingClientRect().top) : '-';
+        linhas.push(Math.round(performance.now() - inicio) + ' ' + tipo + (extra || '') + ' vh' + Math.round(vv.height) +
+          ' o' + Math.round(vv.offsetTop) + ' c' + fundo + ' d' + desloc);
+      };
+      var enviar = function () {
+        if (!inicio || enviado) return;
+        enviado = true;
+        reportar('Teclado iPhone: ih' + alturaCheia + ' iw' + window.innerWidth + ' dpr' + window.devicePixelRatio +
+          (location.search ? ' ' + location.search.slice(0, 60) : '') + ' | ' + linhas.join('; '), 'Teclado iPhone', true);
+      };
+      var campoComFoco = function () {
+        var el = document.activeElement;
+        while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
+        return el && !el.__isca && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') ? el : null;
+      };
+      var comecar = function () { if (!inicio) { inicio = performance.now(); setTimeout(enviar, 6000); } };
+      var canvasApp = function () {
+        var r = document.body.shadowRoot;
+        return (r && r.querySelector('canvas')) || document.querySelector('canvas');
+      };
+      var calcular = function () {
+        pendente = false;
+        var campo = campoComFoco(), cv = canvasApp(), d = 0;
+        if (!campo) alturaCheia = window.innerHeight;
+        if (deslocLigado && campo && cv && vv.height < alturaCheia - BARRA && vv.scale < 1.01) {
+          // Fundo do campo dentro da área do app (não muda com o deslocamento) contra o fundo da parte visível, que já
+          // inclui o que o próprio Safari tenha deslocado (offsetTop): os dois juntos somam só o necessário.
+          var base = campo.getBoundingClientRect().bottom - cv.getBoundingClientRect().top;
+          d = Math.round(Math.min(Math.max(0, base + MARGEM - (vv.offsetTop + vv.height)), alturaCheia - vv.height));
+        }
+        if (Math.abs(d - desloc) > TREMOR || (d === 0 && desloc !== 0)) {
+          document.body.style.transform = d ? 'translateY(-' + d + 'px)' : '';
+          desloc = d;
+          registrar('d');
+        }
+        // Sem campo com foco a página volta ao topo. Com foco não briga com o Safari: a conta acima já desconta.
+        if (!campo && (window.scrollX || window.scrollY || vv.offsetTop || vv.offsetLeft)) window.scrollTo(0, 0);
+      };
+      var agendar = function () { if (!pendente) { pendente = true; raf(calcular); } };
+      var altura = 0, topo = 0;
+      vv.addEventListener('resize', function () {
+        if (Math.abs(vv.height - altura) > TREMOR) { altura = vv.height; registrar('vr'); }
+        agendar();
+      });
+      vv.addEventListener('scroll', function () {
+        if (Math.abs(vv.offsetTop - topo) > TREMOR) { topo = vv.offsetTop; registrar('vs'); }
+        agendar();
+      });
+      window.addEventListener('scroll', function () { registrar('ws'); agendar(); }, { passive: true });
+      window.addEventListener('resize', agendar);
+      // Foco: a troca E-mail -> Senha acontece dentro do app (shadowRoot) e não chega ao document; ouve nos dois.
+      var aoFocar = function () {
+        var c = campoComFoco();
+        if (!c) return;
+        comecar();
+        // Qual campo: o topo dele dentro da área do app (o campo escondido do Compose é sempre do tipo texto).
+        var cv = canvasApp();
+        registrar('fi', cv ? ' y' + Math.round(c.getBoundingClientRect().top - cv.getBoundingClientRect().top) : '');
+        agendar();
+      };
+      var aoSair = function () { registrar('fo'); setTimeout(agendar, 100); };
+      var aoTocar = function (e) {
+        var t = e.touches && e.touches[0];
+        if (t) registrar('tq', ' y' + Math.round(t.clientY));
+      };
+      var ouvir = function (alvo) {
+        if (!alvo || alvo.__tecladoOuvido) return;
+        alvo.__tecladoOuvido = true;
+        alvo.addEventListener('focusin', function () { setTimeout(aoFocar, 0); }, true);
+        alvo.addEventListener('focusout', aoSair, true);
+        alvo.addEventListener('touchstart', aoTocar, { capture: true, passive: true });
+      };
+      // Teclado que não abria: o iOS só abre o teclado se um campo receber o foco DURANTE o toque, e o app dá o foco um
+      // instante depois (e só cria o campo escondido dele no primeiro foco). Ao soltar o dedo sobre um campo de texto do
+      // app (a posição vem da camada de acessibilidade do Compose), uma "isca" da página recebe o foco na hora: o teclado
+      // abre e, logo depois, o app passa o foco para o campo dele, com o teclado já aberto.
+      if (OPCOES.isca !== '0') {
+        var isca = document.createElement('input');
+        isca.type = 'text'; isca.tabIndex = -1; isca.__isca = true;
+        isca.setAttribute('aria-hidden', 'true');
+        ['autocomplete', 'autocorrect', 'autocapitalize'].forEach(function (a) { isca.setAttribute(a, 'off'); });
+        isca.setAttribute('spellcheck', 'false');
+        isca.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;font-size:16px;border:0;padding:0;' +
+          'margin:0;pointer-events:none;background:transparent;color:transparent;caret-color:transparent;';
+        // Fora do body: o app ocupa o body (shadowRoot) e o que fica no body não aparece nem recebe foco.
+        document.documentElement.appendChild(isca);
+        var sobreCampo = function (x, y) {
+          var r = document.body.shadowRoot, raiz = r && r.getElementById('cmp_a11y_root');
+          if (!raiz) return false;
+          var nos = raiz.querySelectorAll('[role="textbox"]');
+          for (var i = 0; i < nos.length; i++) {
+            var b = nos[i].getBoundingClientRect();
+            if (x >= b.left && x <= b.right && y >= b.top && y <= b.bottom) return true;
+          }
+          return false;
+        };
+        window.addEventListener('touchend', function (e) {
+          var t = e.changedTouches && e.changedTouches[0];
+          if (!t || campoComFoco() || !sobreCampo(t.clientX, t.clientY)) return;
+          // Na altura do dedo: o Safari não tem motivo para rolar a página até a isca.
+          isca.style.left = Math.max(0, Math.min(window.innerWidth - 2, t.clientX)) + 'px';
+          isca.style.top = Math.max(0, Math.min(window.innerHeight - 2, t.clientY)) + 'px';
+          try { isca.focus({ preventScroll: true }); } catch (x) { isca.focus(); }
+          comecar();
+          registrar('is');
+          // Se o app não pegar o foco, solta a isca e o teclado fecha.
+          setTimeout(function () { if (document.activeElement === isca) isca.blur(); }, 1000);
+        }, true);
+      }
+      ouvir(document);
+      document.addEventListener('focusin', function () { ouvir(document.body.shadowRoot); }, true);
+      var tentativas = 0;
+      var procurar = setInterval(function () {
+        if (document.body.shadowRoot) ouvir(document.body.shadowRoot);
+        if (document.body.shadowRoot || ++tentativas > 120) clearInterval(procurar);
+      }, 500);
+      window.addEventListener('pagehide', enviar);
+      document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') enviar(); });
+    })();
+    // Tela branca no iPhone: o app desenha numa área WebGL. Grava se ela não abrir ou se perder (memória de vídeo)
+    // e, no iPhone/iPad, um retrato da tela uns segundos depois de abrir.
+    (function () {
+      // Contadores: quantos quadros o app pediu, quantos desenhos fez na área WebGL e a cor de um ponto no meio da tela.
+      var st = { raf: 0, draws: 0, clears: 0, pixel: '-', attrs: '-' }, glAtual = null;
+      try {
+        var origRaf = window.requestAnimationFrame;
+        window.requestAnimationFrame = function (cb) {
+          return origRaf.call(window, function (t) {
+            st.raf++;
+            var r = cb(t);
+            if (glAtual && (st.raf <= 3 || st.raf % 20 === 0)) {
+              try {
+                var px = new Uint8Array(4);
+                glAtual.readPixels(glAtual.drawingBufferWidth >> 1, glAtual.drawingBufferHeight >> 1, 1, 1, glAtual.RGBA, glAtual.UNSIGNED_BYTE, px);
+                st.pixel = Array.prototype.join.call(px, '.');
+              } catch (e) { st.pixel = 'erro ' + e; }
+            }
+            return r;
+          });
+        };
+      } catch (e) {}
+      try {
+        var orig = HTMLCanvasElement.prototype.getContext;
+        HTMLCanvasElement.prototype.getContext = function (tipo, op) {
+          var ctx = orig.call(this, tipo, op);
+          if (/webgl/.test(String(tipo))) {
+            if (!ctx) reportar('WebGL não abriu (' + tipo + ')');
+            else if (!this.__vigiado) {
+              this.__vigiado = true;
+              this.addEventListener('webglcontextlost', function () { reportar('WebGL perdido (memória de vídeo?)'); });
+              ['drawElements', 'drawArrays', 'clear'].forEach(function (n) {
+                var o = ctx[n];
+                if (typeof o === 'function') ctx[n] = function () { if (n === 'clear') st.clears++; else st.draws++; return o.apply(ctx, arguments); };
+              });
+              glAtual = ctx;
+              try { st.attrs = JSON.stringify(ctx.getContextAttributes()); } catch (e) {}
+            }
+          }
+          return ctx;
+        };
+      } catch (e) {}
+      window.__diagTela = function () {
+        return ', quadros ' + st.raf + ', desenhos ' + st.draws + ', limpezas ' + st.clears + ', pixel do meio ' + st.pixel +
+          (glAtual ? ', erroGL ' + glAtual.getError() : '') + ', webgl ' + st.attrs;
+      };
+      if (IOS) setTimeout(function () {
+        if (document.getElementById('carregando')) return;
+        var raiz = document.body.shadowRoot || document;
+        var c = raiz.querySelector('canvas') || document.querySelector('canvas');
+        var gpu = '?', pos = '?';
+        try {
+          var g = c && (c.getContext('webgl2') || c.getContext('webgl'));
+          var ext = g && g.getExtension('WEBGL_debug_renderer_info');
+          gpu = g ? (ext ? g.getParameter(ext.UNMASKED_RENDERER_WEBGL) : g.getParameter(g.RENDERER)) + (g.isContextLost() ? ' PERDIDO' : '') : 'sem contexto';
+          var r = c && c.getBoundingClientRect(); pos = r ? Math.round(r.left) + ',' + Math.round(r.top) + ' ' + Math.round(r.width) + 'x' + Math.round(r.height) : '?';
+        } catch (e) { gpu = 'erro: ' + e; }
+        reportar('Diagnóstico iPhone: tela ' + innerWidth + 'x' + innerHeight + ', dpr ' + devicePixelRatio +
+          ', canvas ' + (c ? c.width + 'x' + c.height : 'nenhum') + ', posição ' + pos + ', gpu ' + gpu + window.__diagTela());
+      }, 8000);
+    })();
+    (function () {
+      try {
+        fetch('versao.txt?t=' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.text() : ''; }).then(function (v) {
+          v = (v || '').trim();
+          if (!v || VERSAO.indexOf('__') === 0 || v === VERSAO || OPCOES.v === v) return;
+          // Recarrega com a versão nova, mantendo as outras opções do endereço (ex.: ?teste=campos na página de teste).
+          var q = new URLSearchParams(location.search); q.set('v', v);
+          location.replace('./?' + q.toString());
+        }).catch(function () {});
+      } catch (e) {}
+    })();
+    // Página de teste (?teste=campos): um campo HTML comum no rodapé, para comparar com os campos do app.
+    if (OPCOES.teste === 'campos') (function () {
+      var c = document.createElement('input');
+      c.placeholder = 'Campo HTML comum (controle)';
+      c.style.cssText = 'position:fixed;left:8px;right:8px;bottom:8px;z-index:9;font-size:16px;padding:10px;border:2px solid #f60;' +
+        'border-radius:8px;background:#fff;color:#000;';
+      document.documentElement.appendChild(c);
+    })();
+    // Kotlin/Wasm precisa de WebAssembly com coleta de lixo (Safari 18.2+ / iOS 18.2+, Chrome 119+).
+    (function () {
+      var ok = typeof WebAssembly === 'object' && WebAssembly.validate(new Uint8Array([0,97,115,109,1,0,0,0,1,5,1,95,1,120,0]));
+      if (!ok) {
+        reportar('Navegador sem WebAssembly GC (antigo)');
+        mostrar('Este navegador é antigo para o OficinaControl.<br>No iPhone, atualize o iOS (Ajustes › Geral › Atualização de Software) e abra de novo no Safari.');
+        return;
+      }
+      var s0 = document.createElement('script');
+      s0.onerror = function () { reportar('Não baixou oficina.js'); mostrar('Não foi possível baixar o OficinaControl. Confira a internet e abra de novo.'); };
+      s0.src = 'oficina.js?v=' + VERSAO; document.body.appendChild(s0);
+      // Tela parada em "Carregando" (ou em branco) por muito tempo: grava para descobrir o motivo.
+      setTimeout(function () { if (document.getElementById('carregando')) reportar('Ainda carregando depois de 40 s'); }, 40000);
+    })();
+  </script>
+</body>
+</html>

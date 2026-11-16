@@ -29,8 +29,11 @@
   <script>
     // Versão desta página (trocada na publicação). O Safari e o app na tela inicial do iPhone guardam a página antiga:
     // ao abrir, confere a versão publicada (sem cache) e, se saiu outra, recarrega com a nova.
-    var VERSAO = '5.34.2';
+    var VERSAO = '5.34.3';
     var IOS = /iPhone|iPad/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    // Opções do endereço (usadas na página de teste): isca=0, desloc=0, a11y=0, teste=campos, seguro=1.
+    var OPCOES = {};
+    try { new URLSearchParams(location.search).forEach(function (v, k) { OPCOES[k] = v; }); } catch (e) {}
     function mostrar(t) { var m = document.getElementById('msg'); if (m) m.innerHTML = t; }
     // Log de erros (Supabase, tabela erro_app): grava quando a página não abre, com o modelo do aparelho e a versão.
     // "reservado": não conta no limite (usado só pelo relatório do teclado, que sai uma vez).
@@ -74,6 +77,7 @@
     (function () {
       var vv = window.visualViewport;
       if (!IOS || !vv) return;
+      var deslocLigado = OPCOES.desloc !== '0';
       var MARGEM = 12;  // folga entre o fundo do campo e o teclado
       var BARRA = 80;   // diferença de altura menor que isso é a barra do Safari, não o teclado
       var TREMOR = 2;   // mudanças de até 2 px são ignoradas
@@ -95,13 +99,15 @@
       var enviar = function () {
         if (!inicio || enviado) return;
         enviado = true;
-        reportar('Teclado iPhone: ih' + alturaCheia + ' iw' + window.innerWidth + ' | ' + linhas.join('; '), 'Teclado iPhone', true);
+        reportar('Teclado iPhone: ih' + alturaCheia + ' iw' + window.innerWidth + ' dpr' + window.devicePixelRatio +
+          (location.search ? ' ' + location.search.slice(0, 60) : '') + ' | ' + linhas.join('; '), 'Teclado iPhone', true);
       };
       var campoComFoco = function () {
         var el = document.activeElement;
         while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
-        return el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') ? el : null;
+        return el && !el.__isca && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') ? el : null;
       };
+      var comecar = function () { if (!inicio) { inicio = performance.now(); setTimeout(enviar, 6000); } };
       var canvasApp = function () {
         var r = document.body.shadowRoot;
         return (r && r.querySelector('canvas')) || document.querySelector('canvas');
@@ -110,7 +116,7 @@
         pendente = false;
         var campo = campoComFoco(), cv = canvasApp(), d = 0;
         if (!campo) alturaCheia = window.innerHeight;
-        if (campo && cv && vv.height < alturaCheia - BARRA && vv.scale < 1.01) {
+        if (deslocLigado && campo && cv && vv.height < alturaCheia - BARRA && vv.scale < 1.01) {
           // Fundo do campo dentro da área do app (não muda com o deslocamento) contra o fundo da parte visível, que já
           // inclui o que o próprio Safari tenha deslocado (offsetTop): os dois juntos somam só o necessário.
           var base = campo.getBoundingClientRect().bottom - cv.getBoundingClientRect().top;
@@ -140,7 +146,7 @@
       var aoFocar = function () {
         var c = campoComFoco();
         if (!c) return;
-        if (!inicio) { inicio = performance.now(); setTimeout(enviar, 6000); }
+        comecar();
         // Qual campo: o topo dele dentro da área do app (o campo escondido do Compose é sempre do tipo texto).
         var cv = canvasApp();
         registrar('fi', cv ? ' y' + Math.round(c.getBoundingClientRect().top - cv.getBoundingClientRect().top) : '');
@@ -158,6 +164,43 @@
         alvo.addEventListener('focusout', aoSair, true);
         alvo.addEventListener('touchstart', aoTocar, { capture: true, passive: true });
       };
+      // Teclado que não abria: o iOS só abre o teclado se um campo receber o foco DURANTE o toque, e o app dá o foco um
+      // instante depois (e só cria o campo escondido dele no primeiro foco). Ao soltar o dedo sobre um campo de texto do
+      // app (a posição vem da camada de acessibilidade do Compose), uma "isca" da página recebe o foco na hora: o teclado
+      // abre e, logo depois, o app passa o foco para o campo dele, com o teclado já aberto.
+      if (OPCOES.isca !== '0') {
+        var isca = document.createElement('input');
+        isca.type = 'text'; isca.tabIndex = -1; isca.__isca = true;
+        isca.setAttribute('aria-hidden', 'true');
+        ['autocomplete', 'autocorrect', 'autocapitalize'].forEach(function (a) { isca.setAttribute(a, 'off'); });
+        isca.setAttribute('spellcheck', 'false');
+        isca.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;font-size:16px;border:0;padding:0;' +
+          'margin:0;pointer-events:none;background:transparent;color:transparent;caret-color:transparent;';
+        // Fora do body: o app ocupa o body (shadowRoot) e o que fica no body não aparece nem recebe foco.
+        document.documentElement.appendChild(isca);
+        var sobreCampo = function (x, y) {
+          var r = document.body.shadowRoot, raiz = r && r.getElementById('cmp_a11y_root');
+          if (!raiz) return false;
+          var nos = raiz.querySelectorAll('[role="textbox"]');
+          for (var i = 0; i < nos.length; i++) {
+            var b = nos[i].getBoundingClientRect();
+            if (x >= b.left && x <= b.right && y >= b.top && y <= b.bottom) return true;
+          }
+          return false;
+        };
+        window.addEventListener('touchend', function (e) {
+          var t = e.changedTouches && e.changedTouches[0];
+          if (!t || campoComFoco() || !sobreCampo(t.clientX, t.clientY)) return;
+          // Na altura do dedo: o Safari não tem motivo para rolar a página até a isca.
+          isca.style.left = Math.max(0, Math.min(window.innerWidth - 2, t.clientX)) + 'px';
+          isca.style.top = Math.max(0, Math.min(window.innerHeight - 2, t.clientY)) + 'px';
+          try { isca.focus({ preventScroll: true }); } catch (x) { isca.focus(); }
+          comecar();
+          registrar('is');
+          // Se o app não pegar o foco, solta a isca e o teclado fecha.
+          setTimeout(function () { if (document.activeElement === isca) isca.blur(); }, 1000);
+        }, true);
+      }
       ouvir(document);
       document.addEventListener('focusin', function () { ouvir(document.body.shadowRoot); }, true);
       var tentativas = 0;
@@ -233,9 +276,20 @@
       try {
         fetch('versao.txt?t=' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.text() : ''; }).then(function (v) {
           v = (v || '').trim();
-          if (v && VERSAO.indexOf('__') !== 0 && v !== VERSAO && location.search.indexOf('v=' + v) < 0) location.replace('./?v=' + v);
+          if (!v || VERSAO.indexOf('__') === 0 || v === VERSAO || OPCOES.v === v) return;
+          // Recarrega com a versão nova, mantendo as outras opções do endereço (ex.: ?teste=campos na página de teste).
+          var q = new URLSearchParams(location.search); q.set('v', v);
+          location.replace('./?' + q.toString());
         }).catch(function () {});
       } catch (e) {}
+    })();
+    // Página de teste (?teste=campos): um campo HTML comum no rodapé, para comparar com os campos do app.
+    if (OPCOES.teste === 'campos') (function () {
+      var c = document.createElement('input');
+      c.placeholder = 'Campo HTML comum (controle)';
+      c.style.cssText = 'position:fixed;left:8px;right:8px;bottom:8px;z-index:9;font-size:16px;padding:10px;border:2px solid #f60;' +
+        'border-radius:8px;background:#fff;color:#000;';
+      document.documentElement.appendChild(c);
     })();
     // Kotlin/Wasm precisa de WebAssembly com coleta de lixo (Safari 18.2+ / iOS 18.2+, Chrome 119+).
     (function () {
