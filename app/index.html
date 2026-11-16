@@ -14,7 +14,7 @@
   <link rel="manifest" href="manifest.json">
   <style>
     html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #111; overscroll-behavior: none; }
-    /* iPhone: a página não rola; a altura acompanha a parte da tela acima do teclado (ajustada no script). */
+    /* iPhone: a página não rola e a altura não muda; com o teclado aberto ela é deslocada para cima (script). */
     body { position: fixed; top: 0; left: 0; right: 0; }
     #carregando { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
       color: #eee; font-family: -apple-system, system-ui, sans-serif; gap: 16px; text-align: center; padding: 24px; }
@@ -29,17 +29,19 @@
   <script>
     // Versão desta página (trocada na publicação). O Safari e o app na tela inicial do iPhone guardam a página antiga:
     // ao abrir, confere a versão publicada (sem cache) e, se saiu outra, recarrega com a nova.
-    var VERSAO = '5.34.1';
+    var VERSAO = '5.34.2';
+    var IOS = /iPhone|iPad/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
     function mostrar(t) { var m = document.getElementById('msg'); if (m) m.innerHTML = t; }
     // Log de erros (Supabase, tabela erro_app): grava quando a página não abre, com o modelo do aparelho e a versão.
+    // "reservado": não conta no limite (usado só pelo relatório do teclado, que sai uma vez).
     var reportados = 0;
-    function reportar(msg) {
-      if (++reportados > 10) return;  // no máximo 10 por abertura da página
+    function reportar(msg, tela, reservado) {
+      if (!reservado && ++reportados > 10) return;  // no máximo 10 por abertura da página
       try {
         fetch('https://sgzcsdsdjuspcdaxxggb.supabase.co/rest/v1/rpc/registrar_erro', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', apikey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNnemNzZHNkanVzcGNkYXh4Z2diIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI4NjI0MTUsImV4cCI6MjEwODQzODQxNX0.0LobydfLKEfC9XZdBGOIN88ycAapcEosOxLHa3rz1Yg', Authorization: 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNnemNzZHNkanVzcGNkYXh4Z2diIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI4NjI0MTUsImV4cCI6MjEwODQzODQxNX0.0LobydfLKEfC9XZdBGOIN88ycAapcEosOxLHa3rz1Yg' },
-          body: JSON.stringify({ p: { versao: VERSAO, plataforma: 'web: ' + navigator.userAgent, tela: 'Abertura da página', mensagem: String(msg).slice(0, 900) } })
+          body: JSON.stringify({ p: { versao: VERSAO, plataforma: 'web: ' + navigator.userAgent, tela: tela || 'Abertura da página', mensagem: String(msg).slice(0, 900) } })
         }).catch(function () {});
       } catch (e) {}
     }
@@ -65,44 +67,106 @@
         };
       });
     })();
-    // Digitação no iPhone: o app recebe o texto num campo escondido que anda junto com o cursor. Num texto comprido ele
-    // passava da borda da tela e o Safari arrastava a página atrás dele (o app subia e sumia no meio da digitação).
-    // O campo fica preso no canto de cima, sempre visível para o Safari; o que se vê continua sendo o desenho do app.
-    (function () {
-      var css = 'input, textarea { left: 0 !important; top: 0 !important; right: auto !important; bottom: auto !important; ' +
-        'transform: none !important; max-width: 2px !important; }';
-      var prender = function (raiz) {
-        if (!raiz || raiz.__campoPreso) return;
-        var s = document.createElement('style'); s.textContent = css;
-        (raiz === document ? document.head : raiz).appendChild(s);
-        raiz.__campoPreso = true;
-      };
-      prender(document);
-      var tentativas = 0;
-      var t = setInterval(function () {
-        if (document.body && document.body.shadowRoot) prender(document.body.shadowRoot);
-        document.querySelectorAll('*').forEach(function (e) { if (e.shadowRoot) prender(e.shadowRoot); });
-        if (++tentativas > 30) clearInterval(t);
-      }, 1000);
-    })();
-    // Teclado do iPhone: ao abrir, o Safari empurra a página para cima e o app sumia. A área do app passa a ter a altura
-    // da parte visível (acima do teclado) e a página volta para o topo sempre que o Safari tenta rolar.
+    // Teclado do iPhone (página 5.34.2). Com o teclado aberto, um campo na metade de baixo fica atrás dele e o Safari
+    // empurrava a página (o app subia e sumia). Aqui a página inteira é deslocada para cima só o necessário para o campo
+    // com foco ficar acima do teclado. O tamanho da área do app NÃO muda (mudar fazia o login se rearrumar e o toque cair
+    // em outro campo). Só no iPhone/iPad; Android e computador ficam como estavam.
     (function () {
       var vv = window.visualViewport;
-      if (!vv) return;
-      var ajustar = function () {
-        var h = Math.round(vv.height) + 'px';
-        if (document.body.style.height !== h) {
-          document.documentElement.style.height = h; document.body.style.height = h;
-          // O app (Compose) só refaz o tamanho da tela com o aviso de redimensionar da janela.
-          window.dispatchEvent(new Event('resize'));
-        }
-        if (window.scrollY || window.pageYOffset || document.documentElement.scrollTop) window.scrollTo(0, 0);
+      if (!IOS || !vv) return;
+      var MARGEM = 12;  // folga entre o fundo do campo e o teclado
+      var BARRA = 80;   // diferença de altura menor que isso é a barra do Safari, não o teclado
+      var TREMOR = 2;   // mudanças de até 2 px são ignoradas
+      var raf = window.requestAnimationFrame.bind(window);  // o original (o diagnóstico abaixo o substitui)
+      var desloc = 0, pendente = false, alturaCheia = window.innerHeight;
+      // Registro de diagnóstico: só números (nunca o texto digitado), no máximo 18 linhas, enviado uma vez.
+      var inicio = 0, linhas = [], enviado = false, ultimo = {};
+      var registrar = function (tipo, extra) {
+        if (!inicio || enviado || linhas.length >= 18) return;
+        // O mesmo evento chega pelo document e pelo app (shadowRoot): grava uma vez só.
+        var agora = performance.now(), chave = tipo + (extra || '');
+        if (ultimo.chave === chave && agora - ultimo.t < 50) return;
+        ultimo = { chave: chave, t: agora };
+        var c = campoComFoco(), cv = canvasApp();
+        var fundo = c && cv ? Math.round(c.getBoundingClientRect().bottom - cv.getBoundingClientRect().top) : '-';
+        linhas.push(Math.round(performance.now() - inicio) + ' ' + tipo + (extra || '') + ' vh' + Math.round(vv.height) +
+          ' o' + Math.round(vv.offsetTop) + ' c' + fundo + ' d' + desloc);
       };
-      vv.addEventListener('resize', ajustar);
-      vv.addEventListener('scroll', ajustar);
-      window.addEventListener('scroll', ajustar, { passive: true });
-      ajustar();
+      var enviar = function () {
+        if (!inicio || enviado) return;
+        enviado = true;
+        reportar('Teclado iPhone: ih' + alturaCheia + ' iw' + window.innerWidth + ' | ' + linhas.join('; '), 'Teclado iPhone', true);
+      };
+      var campoComFoco = function () {
+        var el = document.activeElement;
+        while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
+        return el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') ? el : null;
+      };
+      var canvasApp = function () {
+        var r = document.body.shadowRoot;
+        return (r && r.querySelector('canvas')) || document.querySelector('canvas');
+      };
+      var calcular = function () {
+        pendente = false;
+        var campo = campoComFoco(), cv = canvasApp(), d = 0;
+        if (!campo) alturaCheia = window.innerHeight;
+        if (campo && cv && vv.height < alturaCheia - BARRA && vv.scale < 1.01) {
+          // Fundo do campo dentro da área do app (não muda com o deslocamento) contra o fundo da parte visível, que já
+          // inclui o que o próprio Safari tenha deslocado (offsetTop): os dois juntos somam só o necessário.
+          var base = campo.getBoundingClientRect().bottom - cv.getBoundingClientRect().top;
+          d = Math.round(Math.min(Math.max(0, base + MARGEM - (vv.offsetTop + vv.height)), alturaCheia - vv.height));
+        }
+        if (Math.abs(d - desloc) > TREMOR || (d === 0 && desloc !== 0)) {
+          document.body.style.transform = d ? 'translateY(-' + d + 'px)' : '';
+          desloc = d;
+          registrar('d');
+        }
+        // Sem campo com foco a página volta ao topo. Com foco não briga com o Safari: a conta acima já desconta.
+        if (!campo && (window.scrollX || window.scrollY || vv.offsetTop || vv.offsetLeft)) window.scrollTo(0, 0);
+      };
+      var agendar = function () { if (!pendente) { pendente = true; raf(calcular); } };
+      var altura = 0, topo = 0;
+      vv.addEventListener('resize', function () {
+        if (Math.abs(vv.height - altura) > TREMOR) { altura = vv.height; registrar('vr'); }
+        agendar();
+      });
+      vv.addEventListener('scroll', function () {
+        if (Math.abs(vv.offsetTop - topo) > TREMOR) { topo = vv.offsetTop; registrar('vs'); }
+        agendar();
+      });
+      window.addEventListener('scroll', function () { registrar('ws'); agendar(); }, { passive: true });
+      window.addEventListener('resize', agendar);
+      // Foco: a troca E-mail -> Senha acontece dentro do app (shadowRoot) e não chega ao document; ouve nos dois.
+      var aoFocar = function () {
+        var c = campoComFoco();
+        if (!c) return;
+        if (!inicio) { inicio = performance.now(); setTimeout(enviar, 6000); }
+        // Qual campo: o topo dele dentro da área do app (o campo escondido do Compose é sempre do tipo texto).
+        var cv = canvasApp();
+        registrar('fi', cv ? ' y' + Math.round(c.getBoundingClientRect().top - cv.getBoundingClientRect().top) : '');
+        agendar();
+      };
+      var aoSair = function () { registrar('fo'); setTimeout(agendar, 100); };
+      var aoTocar = function (e) {
+        var t = e.touches && e.touches[0];
+        if (t) registrar('tq', ' y' + Math.round(t.clientY));
+      };
+      var ouvir = function (alvo) {
+        if (!alvo || alvo.__tecladoOuvido) return;
+        alvo.__tecladoOuvido = true;
+        alvo.addEventListener('focusin', function () { setTimeout(aoFocar, 0); }, true);
+        alvo.addEventListener('focusout', aoSair, true);
+        alvo.addEventListener('touchstart', aoTocar, { capture: true, passive: true });
+      };
+      ouvir(document);
+      document.addEventListener('focusin', function () { ouvir(document.body.shadowRoot); }, true);
+      var tentativas = 0;
+      var procurar = setInterval(function () {
+        if (document.body.shadowRoot) ouvir(document.body.shadowRoot);
+        if (document.body.shadowRoot || ++tentativas > 120) clearInterval(procurar);
+      }, 500);
+      window.addEventListener('pagehide', enviar);
+      document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') enviar(); });
     })();
     // Tela branca no iPhone: o app desenha numa área WebGL. Grava se ela não abrir ou se perder (memória de vídeo)
     // e, no iPhone/iPad, um retrato da tela uns segundos depois de abrir.
@@ -150,8 +214,7 @@
         return ', quadros ' + st.raf + ', desenhos ' + st.draws + ', limpezas ' + st.clears + ', pixel do meio ' + st.pixel +
           (glAtual ? ', erroGL ' + glAtual.getError() : '') + ', webgl ' + st.attrs;
       };
-      var ios = /iPhone|iPad/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-      if (ios) setTimeout(function () {
+      if (IOS) setTimeout(function () {
         if (document.getElementById('carregando')) return;
         var raiz = document.body.shadowRoot || document;
         var c = raiz.querySelector('canvas') || document.querySelector('canvas');
