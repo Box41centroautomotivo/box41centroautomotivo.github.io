@@ -29,7 +29,7 @@
   <script>
     // Versão desta página (trocada na publicação). O Safari e o app na tela inicial do iPhone guardam a página antiga:
     // ao abrir, confere a versão publicada (sem cache) e, se saiu outra, recarrega com a nova.
-    var VERSAO = '5.41';
+    var VERSAO = '5.41.1';
     var IOS = /iPhone|iPad/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
     // Opções do endereço (usadas na página de teste): isca=0|pd, desloc=0, a11y=0, teste=campos, seguro=1, diag=0, css=0,
     // semext=bvbi,multidraw,todas (ou nomes de extensões WebGL). Sem opção, a página funciona como sempre.
@@ -37,6 +37,12 @@
     try { new URLSearchParams(location.search).forEach(function (v, k) { OPCOES[k] = v; }); } catch (e) {}
     // ?css=0: tira a trava da página (body fixo), como era até a 5.34.
     if (OPCOES.css === '0') document.body.style.position = 'static';
+    // ?iw=0: tira o interactive-widget=resizes-content (o WebKit passou a entender no iOS 27.x e pode redimensionar a
+    // área do app com o teclado aberto). Teste da tela branca ao digitar (5.41.1).
+    if (OPCOES.iw === '0') try {
+      var mv = document.querySelector('meta[name="viewport"]');
+      mv.setAttribute('content', mv.getAttribute('content').replace(/,\s*interactive-widget=[^,]*/, ''));
+    } catch (e) {}
     // ?semext=...: esconde extensões do WebGL antes do app abrir (teste do desenho que perde a posição no iPhone).
     // getExtension e getSupportedExtensions são filtrados juntos, senão o carregador do app se confunde.
     (function () {
@@ -167,9 +173,24 @@
       window.addEventListener('scroll', function () { registrar('ws'); agendar(); }, { passive: true });
       window.addEventListener('resize', agendar);
       // Foco: a troca E-mail -> Senha acontece dentro do app (shadowRoot) e não chega ao document; ouve nos dois.
+      // Tela branca ao digitar (iOS 27, 5.41.1): retrato da tela 0,8 s e 2,5 s depois do foco no campo (só as 2 primeiras vezes).
+      var retratos = 0;
+      var retratoDigitar = function (quando) {
+        var cv = canvasApp(), r = cv && cv.getBoundingClientRect();
+        var base = 'Tela ao digitar ' + quando + ': ' + (navigator.standalone ? 'app da tela inicial' : 'Safari') +
+          ', ih' + window.innerHeight + ' iw' + window.innerWidth + ', vv ' + Math.round(vv.width) + 'x' + Math.round(vv.height) +
+          ' o' + Math.round(vv.offsetTop) + ' esc' + vv.scale.toFixed(2) + ', rolagem ' + Math.round(window.scrollY) +
+          ', body ' + (document.body.style.transform || 'sem deslocamento') +
+          ', canvas ' + (cv ? cv.width + 'x' + cv.height + ' em ' + Math.round(r.left) + ',' + Math.round(r.top) + ' ' + Math.round(r.width) + 'x' + Math.round(r.height) : 'nenhum') +
+          ', campo ' + (campoComFoco() ? 'com foco' : 'sem foco') + ', ' + (window.__contadores ? window.__contadores() : '') +
+          (location.search ? ', ' + location.search.slice(0, 60) : '');
+        if (window.__amostraTela) window.__amostraTela(function (txt) { reportar(base + ', ' + txt, 'Tela ao digitar', true); });
+        else reportar(base, 'Tela ao digitar', true);
+      };
       var aoFocar = function () {
         var c = campoComFoco();
         if (!c) return;
+        if (retratos < 2) { retratos++; setTimeout(function () { retratoDigitar('0,8 s'); }, 800); setTimeout(function () { retratoDigitar('2,5 s'); }, 2500); }
         comecar();
         // Qual campo: o topo dele dentro da área do app (o campo escondido do Compose é sempre do tipo texto).
         var cv = canvasApp();
@@ -254,7 +275,14 @@
     // e, no iPhone/iPad, um retrato da tela uns segundos depois de abrir.
     (function () {
       // Contadores: quantos quadros o app pediu, quantos desenhos fez na área WebGL e a cor de um ponto no meio da tela.
-      var st = { raf: 0, draws: 0, clears: 0, pixel: '-', attrs: '-' }, glAtual = null;
+      var st = { raf: 0, draws: 0, clears: 0, pixel: '-', attrs: '-' }, glAtual = null, pedidosAmostra = [];
+      // Tela ao digitar (5.41.1): pede as cores do próximo quadro desenhado; sem quadro em 1,5 s, avisa que o app parou de desenhar.
+      window.__amostraTela = function (cb) {
+        var feito = false, quadros = st.raf;
+        pedidosAmostra.push(function (txt) { if (!feito) { feito = true; cb(txt); } });
+        setTimeout(function () { if (!feito) { feito = true; cb('sem quadro novo em 1,5 s (quadros ' + quadros + '>' + st.raf + ', contexto ' + (glAtual ? (glAtual.isContextLost() ? 'PERDIDO' : 'ok') : 'nenhum') + ')'); } }, 1500);
+      };
+      window.__contadores = function () { return 'quadros ' + st.raf + ' desenhos ' + st.draws; };
       // ?diag=0: não mexe nos quadros nem nos desenhos do app (só avisa se o WebGL não abrir), para ver se a medição atrapalha.
       var medir = OPCOES.diag !== '0';
       if (medir) try {
@@ -263,6 +291,19 @@
           return origRaf.call(window, function (t) {
             st.raf++;
             var r = cb(t);
+            // Amostra pedida (tela ao digitar, 5.41.1): lida aqui, logo depois do desenho do quadro (fora dele o buffer já foi limpo).
+            if (glAtual && pedidosAmostra.length) {
+              var w = glAtual.drawingBufferWidth, h = glAtual.drawingBufferHeight, cores = [];
+              [[0.5, 0.95], [0.5, 0.75], [0.5, 0.5], [0.5, 0.25], [0.5, 0.05]].forEach(function (p) {
+                try {
+                  var px = new Uint8Array(4);
+                  glAtual.readPixels(Math.floor(w * p[0]), Math.floor(h * p[1]), 1, 1, glAtual.RGBA, glAtual.UNSIGNED_BYTE, px);
+                  cores.push(Array.prototype.join.call(px, '.'));
+                } catch (e) { cores.push('erro'); }
+              });
+              var lista = pedidosAmostra; pedidosAmostra = [];
+              lista.forEach(function (f) { f('buffer ' + w + 'x' + h + ' cores(topo>fundo) ' + cores.join(' ')); });
+            }
             if (glAtual && (st.raf <= 3 || st.raf % 20 === 0)) {
               try {
                 var px = new Uint8Array(4);
