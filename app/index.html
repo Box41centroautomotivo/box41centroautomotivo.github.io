@@ -29,7 +29,7 @@
   <script>
     // Versão desta página (trocada na publicação). O Safari e o app na tela inicial do iPhone guardam a página antiga:
     // ao abrir, confere a versão publicada (sem cache) e, se saiu outra, recarrega com a nova.
-    var VERSAO = '5.41.1';
+    var VERSAO = '5.41.2';
     var IOS = /iPhone|iPad/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
     // Opções do endereço (usadas na página de teste): isca=0|pd, desloc=0, a11y=0, teste=campos, seguro=1, diag=0, css=0,
     // semext=bvbi,multidraw,todas (ou nomes de extensões WebGL). Sem opção, a página funciona como sempre.
@@ -37,9 +37,11 @@
     try { new URLSearchParams(location.search).forEach(function (v, k) { OPCOES[k] = v; }); } catch (e) {}
     // ?css=0: tira a trava da página (body fixo), como era até a 5.34.
     if (OPCOES.css === '0') document.body.style.position = 'static';
-    // ?iw=0: tira o interactive-widget=resizes-content (o WebKit passou a entender no iOS 27.x e pode redimensionar a
-    // área do app com o teclado aberto). Teste da tela branca ao digitar (5.41.1).
-    if (OPCOES.iw === '0') try {
+    // iPhone/iPad (5.41.2): sem interactive-widget=resizes-content. Até o iOS 26 o Safari ignorava; no iOS 27 ele passou a
+    // encolher a página com o teclado aberto (innerHeight 641 -> 337) e a rolar a página, o app parava de desenhar e a tela
+    // ficava branca ao digitar. Sem ele, o teclado só cobre a página, como sempre foi no iPhone. O Android continua com ele.
+    // ?iw=0 tira também fora do iPhone; ?iw=1 mantém no iPhone (para comparar).
+    if ((IOS && OPCOES.iw !== '1') || OPCOES.iw === '0') try {
       var mv = document.querySelector('meta[name="viewport"]');
       mv.setAttribute('content', mv.getAttribute('content').replace(/,\s*interactive-widget=[^,]*/, ''));
     } catch (e) {}
@@ -140,7 +142,8 @@
       var comecar = function () { if (!inicio) { inicio = performance.now(); setTimeout(enviar, 6000); } };
       var canvasApp = function () {
         var r = document.body.shadowRoot;
-        return (r && r.querySelector('canvas')) || document.querySelector('canvas');
+        // Compose 1.12 (5.41.1): a área do app não fica mais visível no shadowRoot do body; vem de quem abriu o WebGL.
+        return (r && r.querySelector('canvas')) || document.querySelector('canvas') || window.__canvasApp || null;
       };
       var calcular = function () {
         pendente = false;
@@ -319,6 +322,7 @@
         var orig = HTMLCanvasElement.prototype.getContext;
         HTMLCanvasElement.prototype.getContext = function (tipo, op) {
           var ctx = orig.call(this, tipo, op);
+          if (/webgl/.test(String(tipo)) && ctx && !window.__canvasApp) window.__canvasApp = this;
           if (/webgl/.test(String(tipo))) {
             if (!ctx) reportar('WebGL não abriu (' + tipo + ')');
             else if (medir && !this.__vigiado) {
@@ -342,7 +346,7 @@
       if (IOS) setTimeout(function () {
         if (document.getElementById('carregando')) return;
         var raiz = document.body.shadowRoot || document;
-        var c = raiz.querySelector('canvas') || document.querySelector('canvas');
+        var c = raiz.querySelector('canvas') || document.querySelector('canvas') || window.__canvasApp;
         var gpu = '?', pos = '?', exts = '?';
         try {
           var g = c && (c.getContext('webgl2') || c.getContext('webgl'));
