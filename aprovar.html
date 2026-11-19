@@ -100,7 +100,7 @@
 <footer>Dúvidas sobre algum item? Fale com a oficina pelo WhatsApp antes de responder.</footer>
 
 <script>
-const VERSAO_PAGINA = "aprovar 5.33";
+const VERSAO_PAGINA = "aprovar 5.40";
 const SUPABASE = "https://sgzcsdsdjuspcdaxxggb.supabase.co";
 const CHAVE = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNnemNzZHNkanVzcGNkYXh4Z2diIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI4NjI0MTUsImV4cCI6MjEwODQzODQxNX0.0LobydfLKEfC9XZdBGOIN88ycAapcEosOxLHa3rz1Yg";
 const $ = (id) => document.getElementById(id);
@@ -110,6 +110,88 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 const dataBr = (s) => { if (!s) return ""; const [d, h] = String(s).replace("T", " ").split(" "); const [a, m, di] = d.split("-"); return `${di}/${m}/${a}` + (h ? " " + h.slice(0, 5) : ""); };
 const token = new URLSearchParams(location.search).get("t") || "";
 let dados = null, resposta = {};
+// 5.40: forma de pagamento escolhida pelo cliente (fica guardada entre uma tela e outra).
+const PG = { entrada: "", resto: "" };
+const centavos = (v) => Math.round(v * 100) / 100;
+
+/** Opções de cartão para um valor: 1x pelo valor, de 2x a 18x com juros (fatores da oficina). */
+function opcoesCartao(valor) {
+  const fatores = (dados.pagamento && dados.pagamento.fatores) || [];
+  return fatores.map((f) => {
+    if (f.parcelas === 1) return { n: 1, parcela: centavos(valor), total: centavos(valor) };
+    const parcela = Math.ceil((valor * Number(f.fator) / f.parcelas) * 100 - 1e-9) / 100;
+    return { n: f.parcelas, parcela, total: centavos(parcela * f.parcelas) };
+  });
+}
+
+function secaoPagamento(base) {
+  const pg = dados.pagamento;
+  if (!pg || !dados.pode_aprovar || !(base > 0)) return "";
+  const perc = Number(pg.entrada_perc || 0);
+  const entrada = perc > 0 ? centavos(base * perc / 100) : 0;
+  const resto = centavos(base - entrada);
+  const est = 'style="display:block;width:100%;padding:10px;margin:6px 0 12px;font-size:16px;border-radius:8px"';
+  const escolha = pg.escolha;
+  return `
+    <section class="cartao">
+      <h2>Forma de pagamento</h2>
+      ${escolha && escolha.resumo ? `<div class="ok" role="status">Você escolheu: ${esc(escolha.resumo)}. Pode mudar abaixo.</div>` : ""}
+      ${perc > 0 ? `
+        <p class="meta">Este serviço pede uma entrada de ${perc.toLocaleString("pt-BR")}% para começar.</p>
+        <div class="linha"><span>Entrada (${perc.toLocaleString("pt-BR")}%)</span><span>${reais(entrada)}</span></div>
+        <label>Como vai pagar a entrada
+          <select id="pg-entrada" ${est}>
+            <option value="">Escolha…</option>
+            ${["Pix", "Dinheiro", "Cartão de débito", "Cartão de crédito à vista"].map((o) => `<option ${PG.entrada === o ? "selected" : ""}>${o}</option>`).join("")}
+          </select></label>` : ""}
+      <div class="linha"><span>${perc > 0 ? "Restante" : "Total"}</span><span>${reais(resto)}</span></div>
+      <label>Como vai pagar ${perc > 0 ? "o restante" : ""}
+        <select id="pg-resto" ${est}>
+          <option value="">Escolha…</option>
+          ${["Pix", "Dinheiro", "Cartão de débito"].map((o) => `<option value="vista:${o}" ${PG.resto === "vista:" + o ? "selected" : ""}>À vista no ${o}: ${reais(resto)}</option>`).join("")}
+          ${opcoesCartao(resto).map((x) => `<option value="cartao:${x.n}" ${PG.resto === "cartao:" + x.n ? "selected" : ""}>Cartão de crédito em ${x.n}x de ${reais(x.parcela)}${x.n > 1 ? " (total " + reais(x.total) + ")" : ""}</option>`).join("")}
+        </select></label>
+      <button type="button" class="principal" id="pg-enviar">Enviar forma de pagamento</button>
+      <p class="erro" id="pg-erro" role="alert"></p>
+    </section>`;
+}
+
+function ligarPagamento(base) {
+  const ent = $("pg-entrada"), res = $("pg-resto"), bt = $("pg-enviar");
+  if (!res || !bt) return;
+  if (ent) ent.addEventListener("change", (e) => (PG.entrada = e.target.value));
+  res.addEventListener("change", (e) => (PG.resto = e.target.value));
+  bt.addEventListener("click", async () => {
+    const pg = dados.pagamento || {};
+    const perc = Number(pg.entrada_perc || 0);
+    const entrada = perc > 0 ? centavos(base * perc / 100) : 0;
+    const resto = centavos(base - entrada);
+    if (perc > 0 && !PG.entrada) return ($("pg-erro").textContent = "Escolha como vai pagar a entrada");
+    if (!PG.resto) return ($("pg-erro").textContent = "Escolha como vai pagar" + (perc > 0 ? " o restante" : ""));
+    const [tipo, valor] = PG.resto.split(":");
+    let restoTxt, p = { entrada_forma: perc > 0 ? PG.entrada : "", entrada_valor: perc > 0 ? entrada : "" };
+    if (tipo === "vista") {
+      restoTxt = `${reais(resto)} à vista no ${valor}`;
+      Object.assign(p, { restante_forma: valor, parcelas: 1, valor_parcela: resto, total: base });
+    } else {
+      const x = opcoesCartao(resto).find((o) => String(o.n) === valor);
+      restoTxt = x.n > 1 ? `${reais(x.total)} no cartão de crédito em ${x.n}x de ${reais(x.parcela)}` : `${reais(resto)} no cartão de crédito à vista`;
+      Object.assign(p, { restante_forma: "Cartão de crédito", parcelas: x.n, valor_parcela: x.parcela, total: centavos(entrada + x.total) });
+    }
+    p.resumo = perc > 0 ? `entrada de ${reais(entrada)} (${perc.toLocaleString("pt-BR")}%) no ${PG.entrada}; restante ${restoTxt}` : restoTxt;
+    bt.disabled = true; bt.textContent = "Enviando…";
+    try {
+      const r = await rpc("portal_pagamento", { p_token: token, p });
+      if (r.erro) throw new Error(r.erro);
+      dados = normalizar(r);
+      mostrar("Forma de pagamento enviada! A oficina já recebeu.");
+      window.scrollTo(0, 0);
+    } catch (e) {
+      bt.disabled = false; bt.textContent = "Enviar forma de pagamento";
+      $("pg-erro").textContent = e.message;
+    }
+  });
+}
 
 async function rpc(funcao, corpo) {
   const r = await fetch(`${SUPABASE}/rest/v1/rpc/${funcao}`, {
@@ -203,6 +285,10 @@ function mostrar(msg) {
   const escolhidoSim = pend.filter((l) => resposta[l.id] === true).reduce((s, l) => s + Number(l.liquido), 0);
   const algumNao = pend.some((l) => resposta[l.id] === false);
   const comEscolhas = Math.max(0, Number(t.ja_aprovado) + escolhidoSim - Number(t.desconto_os || 0));
+  // Valor da forma de pagamento: o total da OS, ou o que vai ficar com as respostas (todas aprovadas enquanto faltam respostas).
+  const valorPagamento = t.aguardando > 0 && dados.pode_aprovar
+    ? (faltam ? Math.max(0, Number(t.ja_aprovado) + Number(t.aguardando) - Number(t.desconto_os || 0)) : comEscolhas)
+    : Number(t.total);
   if (of.nome) $("oficina-nome").textContent = of.nome;
   $("oficina-info").textContent = [of.endereco, of.cnpj && "CNPJ " + of.cnpj, of.telefone].filter(Boolean).join(" · ") || "Aprovação do orçamento";
   const anos = [carro.ano, carro.ano_fabricacao].filter((a) => a).join(" | ");
@@ -263,7 +349,9 @@ function mostrar(msg) {
           ${faltam ? `Responda ${faltam === 1 ? "1 item" : faltam + " itens"} para enviar` : "Enviar resposta"}</button>
         <p class="erro" id="erro-envio" role="alert"></p>` : ""}
       <div class="rapido nao-imprimir"><button type="button" class="secundario" id="imprimir">Imprimir</button></div>
-    </section>`;
+    </section>
+    ${secaoPagamento(valorPagamento)}`;
+  ligarPagamento(valorPagamento);
   const motivoAntes = window.__motivo || "";
   if ($("motivo")) { $("motivo").value = motivoAntes; $("motivo").addEventListener("input", (e) => (window.__motivo = e.target.value)); }
   c.querySelectorAll(".escolha button").forEach((b) => b.addEventListener("click", () => {
