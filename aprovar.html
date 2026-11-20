@@ -100,7 +100,7 @@
 <footer>Dúvidas sobre algum item? Fale com a oficina pelo WhatsApp antes de responder.</footer>
 
 <script>
-const VERSAO_PAGINA = "aprovar 5.40";
+const VERSAO_PAGINA = "aprovar 5.42";
 const SUPABASE = "https://sgzcsdsdjuspcdaxxggb.supabase.co";
 const CHAVE = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNnemNzZHNkanVzcGNkYXh4Z2diIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI4NjI0MTUsImV4cCI6MjEwODQzODQxNX0.0LobydfLKEfC9XZdBGOIN88ycAapcEosOxLHa3rz1Yg";
 const $ = (id) => document.getElementById(id);
@@ -113,6 +113,8 @@ let dados = null, resposta = {};
 // 5.40: forma de pagamento escolhida pelo cliente (fica guardada entre uma tela e outra).
 const PG = { entrada: "", resto: "" };
 const centavos = (v) => Math.round(v * 100) / 100;
+// 5.42: escolher o pagamento aprova os itens que ainda esperam resposta (menos os marcados "Não quero").
+let PAG_ITENS = { mostrados: [], aprovados: [], recusados: [], valor: 0 };
 
 /** Opções de cartão para um valor: 1x pelo valor, de 2x a 18x com juros (fatores da oficina). */
 function opcoesCartao(valor) {
@@ -151,7 +153,8 @@ function secaoPagamento(base) {
           ${["Pix", "Dinheiro", "Cartão de débito"].map((o) => `<option value="vista:${o}" ${PG.resto === "vista:" + o ? "selected" : ""}>À vista no ${o}: ${reais(resto)}</option>`).join("")}
           ${opcoesCartao(resto).map((x) => `<option value="cartao:${x.n}" ${PG.resto === "cartao:" + x.n ? "selected" : ""}>Cartão de crédito em ${x.n}x de ${reais(x.parcela)}${x.n > 1 ? " (total " + reais(x.total) + ")" : ""}</option>`).join("")}
         </select></label>
-      <button type="button" class="principal" id="pg-enviar">Enviar forma de pagamento</button>
+      ${PAG_ITENS.aprovados.length ? `<p class="meta" id="pg-aviso">Ao confirmar, você aprova ${PAG_ITENS.aprovados.length === 1 ? "o item que ainda espera" : "os " + PAG_ITENS.aprovados.length + " itens que ainda esperam"} sua resposta (${reais(PAG_ITENS.valor)})${PAG_ITENS.recusados.length ? ", recusa " + (PAG_ITENS.recusados.length === 1 ? "o item marcado" : "os " + PAG_ITENS.recusados.length + " itens marcados") + " com Não quero" : ""} e escolhe a forma de pagamento acima.</p>` : ""}
+      <button type="button" class="principal" id="pg-enviar">${PAG_ITENS.aprovados.length || PAG_ITENS.recusados.length ? "Aprovar e confirmar pagamento" : "Enviar forma de pagamento"}</button>
       <p class="erro" id="pg-erro" role="alert"></p>
     </section>`;
 }
@@ -178,16 +181,36 @@ function ligarPagamento(base) {
       restoTxt = x.n > 1 ? `${reais(x.total)} no cartão de crédito em ${x.n}x de ${reais(x.parcela)}` : `${reais(resto)} no cartão de crédito à vista`;
       Object.assign(p, { restante_forma: "Cartão de crédito", parcelas: x.n, valor_parcela: x.parcela, total: centavos(entrada + x.total) });
     }
+    // 5.42: o que a página mostrou e as escolhas; o servidor aprova, confere o orçamento e recalcula o total.
+    if (PAG_ITENS.mostrados.length) Object.assign(p, {
+      mostrados: PAG_ITENS.mostrados, aprovados: PAG_ITENS.aprovados, recusados: PAG_ITENS.recusados, total_mostrado: centavos(base),
+    });
     p.resumo = perc > 0 ? `entrada de ${reais(entrada)} (${perc.toLocaleString("pt-BR")}%) no ${PG.entrada}; restante ${restoTxt}` : restoTxt;
+    const textoBotao = bt.textContent;
     bt.disabled = true; bt.textContent = "Enviando…";
     try {
       const r = await rpc("portal_pagamento", { p_token: token, p });
+      if (r.erro === "A oficina alterou o orçamento, confira") {
+        // O orçamento mudou depois que a página abriu: mostra os itens de novo para o cliente conferir.
+        const atual = await rpc("portal_itens", { p_token: token });
+        if (!atual.erro) { dados = normalizar(atual); resposta = {}; }
+        mostrar();
+        $("pg-erro").textContent = "A oficina alterou o orçamento enquanto você via. Confira os itens e o valor e confirme de novo.";
+        $("pg-erro").scrollIntoView({ block: "center" });
+        return;
+      }
       if (r.erro) throw new Error(r.erro);
+      const motivo = (window.__motivo || "").trim();
+      if (PAG_ITENS.recusados.length && motivo) {
+        try { await rpc("portal_motivo_recusa", { p_token: token, p_motivo: motivo }); } catch (e) { reportar("Motivo da recusa: " + e.message); }
+      }
+      const n = Number(r.aprovados_no_pagamento || 0);
       dados = normalizar(r);
-      mostrar("Forma de pagamento enviada! A oficina já recebeu.");
+      resposta = {}; window.__motivo = "";
+      mostrar(n > 0 ? `Pronto! Itens respondidos e forma de pagamento enviada. A oficina já recebeu.` : "Forma de pagamento enviada! A oficina já recebeu.");
       window.scrollTo(0, 0);
     } catch (e) {
-      bt.disabled = false; bt.textContent = "Enviar forma de pagamento";
+      bt.disabled = false; bt.textContent = textoBotao;
       $("pg-erro").textContent = e.message;
     }
   });
@@ -286,9 +309,16 @@ function mostrar(msg) {
   const algumNao = pend.some((l) => resposta[l.id] === false);
   const comEscolhas = Math.max(0, Number(t.ja_aprovado) + escolhidoSim - Number(t.desconto_os || 0));
   // Valor da forma de pagamento: o total da OS, ou o que vai ficar com as respostas (todas aprovadas enquanto faltam respostas).
-  const valorPagamento = t.aguardando > 0 && dados.pode_aprovar
-    ? (faltam ? Math.max(0, Number(t.ja_aprovado) + Number(t.aguardando) - Number(t.desconto_os || 0)) : comEscolhas)
+  // 5.42: o pagamento aprova os pendentes que não foram marcados "Não quero" (os sem resposta contam como aprovados).
+  const aprovarNoPag = pend.filter((l) => resposta[l.id] !== false);
+  const valorAprovar = aprovarNoPag.reduce((s, l) => s + Number(l.liquido), 0);
+  const valorPagamento = pend.length
+    ? Math.max(0, centavos(Number(t.ja_aprovado) + valorAprovar - Number(t.desconto_os || 0)))
     : Number(t.total);
+  PAG_ITENS = {
+    mostrados: pend.map((l) => l.id), aprovados: aprovarNoPag.map((l) => l.id),
+    recusados: pend.filter((l) => resposta[l.id] === false).map((l) => l.id), valor: valorAprovar,
+  };
   if (of.nome) $("oficina-nome").textContent = of.nome;
   $("oficina-info").textContent = [of.endereco, of.cnpj && "CNPJ " + of.cnpj, of.telefone].filter(Boolean).join(" · ") || "Aprovação do orçamento";
   const anos = [carro.ano, carro.ano_fabricacao].filter((a) => a).join(" | ");
