@@ -116,13 +116,18 @@ const centavos = (v) => Math.round(v * 100) / 100;
 // 5.42: escolher o pagamento aprova os itens que ainda esperam resposta (menos os marcados "Não quero").
 let PAG_ITENS = { mostrados: [], aprovados: [], recusados: [], valor: 0 };
 
-/** Opções de cartão para um valor: 1x pelo valor, de 2x a 18x com juros (fatores da oficina). */
+/**
+ * Opções de cartão para um valor: 1x pelo valor; até "sem_juros_ate" parcelas sem juros (5.47, a oficina escolhe) e
+ * acima disso com os juros da maquininha (fatores da oficina).
+ */
 function opcoesCartao(valor) {
   const fatores = (dados.pagamento && dados.pagamento.fatores) || [];
+  const semJurosAte = Number((dados.pagamento && dados.pagamento.sem_juros_ate) || 1);
   return fatores.map((f) => {
-    if (f.parcelas === 1) return { n: 1, parcela: centavos(valor), total: centavos(valor) };
+    if (f.parcelas === 1) return { n: 1, parcela: centavos(valor), total: centavos(valor), semJuros: true };
+    if (f.parcelas <= semJurosAte) return { n: f.parcelas, parcela: Math.ceil((valor / f.parcelas) * 100 - 1e-9) / 100, total: centavos(valor), semJuros: true };
     const parcela = Math.ceil((valor * Number(f.fator) / f.parcelas) * 100 - 1e-9) / 100;
-    return { n: f.parcelas, parcela, total: centavos(parcela * f.parcelas) };
+    return { n: f.parcelas, parcela, total: centavos(parcela * f.parcelas), semJuros: false };
   });
 }
 
@@ -151,7 +156,7 @@ function secaoPagamento(base) {
         <select id="pg-resto" ${est}>
           <option value="">Escolha…</option>
           ${["Pix", "Dinheiro", "Cartão de débito"].map((o) => `<option value="vista:${o}" ${PG.resto === "vista:" + o ? "selected" : ""}>À vista no ${o}: ${reais(resto)}</option>`).join("")}
-          ${opcoesCartao(resto).map((x) => `<option value="cartao:${x.n}" ${PG.resto === "cartao:" + x.n ? "selected" : ""}>Cartão de crédito em ${x.n}x de ${reais(x.parcela)}${x.n > 1 ? " (total " + reais(x.total) + ")" : ""}</option>`).join("")}
+          ${opcoesCartao(resto).map((x) => `<option value="cartao:${x.n}" ${PG.resto === "cartao:" + x.n ? "selected" : ""}>Cartão de crédito em ${x.n}x de ${reais(x.parcela)}${x.n > 1 ? (x.semJuros ? " sem juros" : " (total " + reais(x.total) + ", com juros)") : ""}</option>`).join("")}
         </select></label>
       ${PAG_ITENS.aprovados.length ? `<p class="meta" id="pg-aviso">Ao confirmar, você aprova ${PAG_ITENS.aprovados.length === 1 ? "o item que ainda espera" : "os " + PAG_ITENS.aprovados.length + " itens que ainda esperam"} sua resposta (${reais(PAG_ITENS.valor)})${PAG_ITENS.recusados.length ? ", recusa " + (PAG_ITENS.recusados.length === 1 ? "o item marcado" : "os " + PAG_ITENS.recusados.length + " itens marcados") + " com Não quero" : ""} e escolhe a forma de pagamento acima.</p>` : ""}
       <button type="button" class="principal" id="pg-enviar">${PAG_ITENS.aprovados.length || PAG_ITENS.recusados.length ? "Aprovar e confirmar pagamento" : "Enviar forma de pagamento"}</button>
@@ -178,7 +183,7 @@ function ligarPagamento(base) {
       Object.assign(p, { restante_forma: valor, parcelas: 1, valor_parcela: resto, total: base });
     } else {
       const x = opcoesCartao(resto).find((o) => String(o.n) === valor);
-      restoTxt = x.n > 1 ? `${reais(x.total)} no cartão de crédito em ${x.n}x de ${reais(x.parcela)}` : `${reais(resto)} no cartão de crédito à vista`;
+      restoTxt = x.n > 1 ? `${reais(x.total)} no cartão de crédito em ${x.n}x de ${reais(x.parcela)}${x.semJuros ? " sem juros" : " com juros"}` : `${reais(resto)} no cartão de crédito à vista`;
       Object.assign(p, { restante_forma: "Cartão de crédito", parcelas: x.n, valor_parcela: x.parcela, total: centavos(entrada + x.total) });
     }
     // 5.42: o que a página mostrou e as escolhas; o servidor aprova, confere o orçamento e recalcula o total.
