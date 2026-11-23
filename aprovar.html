@@ -111,16 +111,38 @@ const dataBr = (s) => { if (!s) return ""; const [d, h] = String(s).replace("T",
 const token = new URLSearchParams(location.search).get("t") || "";
 let dados = null, resposta = {};
 // 5.40: forma de pagamento escolhida pelo cliente (fica guardada entre uma tela e outra).
-const PG = { entrada: "", resto: "" };
+const PG = { entrada: "", resto: "", bandeira: "" };
 const centavos = (v) => Math.round(v * 100) / 100;
 // 5.42: escolher o pagamento aprova os itens que ainda esperam resposta (menos os marcados "Não quero").
 let PAG_ITENS = { mostrados: [], aprovados: [], recusados: [], valor: 0 };
 
+/** 5.48: bandeiras do cartão com as taxas do crédito por parcela (vazio = banco antigo, usa os fatores). */
+function bandeirasLink() { return (dados.pagamento && dados.pagamento.bandeiras) || []; }
+
+/** Texto de uma opção do cartão: "3x de R$ 100,00 sem juros" ou "3x de R$ 103,00 (total R$ 309,00, com juros)". */
+function textoCartao(x) {
+  return `${x.n}x de ${reais(x.parcela)}` + (x.semJuros ? " sem juros" : x.n > 1 ? ` (total ${reais(x.total)}, com juros)` : " (com juros)");
+}
+
 /**
- * Opções de cartão para um valor: 1x pelo valor; até "sem_juros_ate" parcelas sem juros (5.47, a oficina escolhe) e
- * acima disso com os juros da maquininha (fatores da oficina).
+ * Opções de cartão para um valor. 5.48: pela bandeira que o cliente escolheu (PG.bandeira) e a taxa do crédito dela em
+ * cada parcela (+ 1%, como no sistema). A oficina decide: com juros (todas, inclusive 1x) ou sem juros até "sem_juros_ate"
+ * parcelas (acima disso, com juros). Sem bandeira escolhida, não mostra o cartão.
  */
 function opcoesCartao(valor) {
+  const lista = bandeirasLink();
+  if (lista.length) {
+    const semAte = Number((dados.pagamento && dados.pagamento.sem_juros_ate) || 0);
+    const b = lista.find((x) => x.nome === PG.bandeira);
+    if (!b) return [];
+    return (b.taxas || []).map((tx) => {
+      const n = Number(tx.parcelas);
+      if (semAte > 1 && n <= semAte) return { n, parcela: Math.ceil((valor / n) * 100 - 1e-9) / 100, total: centavos(valor), semJuros: true };
+      const parcela = Math.ceil((valor / (1 - (Number(tx.taxa) + 1) / 100) / n) * 100 - 1e-9) / 100;
+      return { n, parcela, total: centavos(parcela * n), semJuros: false };
+    });
+  }
+  // Banco antes da 5.48: fatores da bandeira padrão.
   const fatores = (dados.pagamento && dados.pagamento.fatores) || [];
   const semJurosAte = Number((dados.pagamento && dados.pagamento.sem_juros_ate) || 1);
   return fatores.map((f) => {
@@ -152,23 +174,43 @@ function secaoPagamento(base) {
             ${["Pix", "Dinheiro", "Cartão de débito", "Cartão de crédito à vista"].map((o) => `<option ${PG.entrada === o ? "selected" : ""}>${o}</option>`).join("")}
           </select></label>` : ""}
       <div class="linha"><span>${perc > 0 ? "Restante" : "Total"}</span><span>${reais(resto)}</span></div>
+      ${bandeirasLink().length ? `
+        <label>Bandeira do cartão de crédito (para ver as parcelas)
+          <select id="pg-bandeira" ${est}>
+            <option value="">Escolha…</option>
+            ${bandeirasLink().map((b) => `<option ${PG.bandeira === b.nome ? "selected" : ""}>${esc(b.nome)}</option>`).join("")}
+          </select></label>` : ""}
       <label>Como vai pagar ${perc > 0 ? "o restante" : ""}
-        <select id="pg-resto" ${est}>
-          <option value="">Escolha…</option>
-          ${["Pix", "Dinheiro", "Cartão de débito"].map((o) => `<option value="vista:${o}" ${PG.resto === "vista:" + o ? "selected" : ""}>À vista no ${o}: ${reais(resto)}</option>`).join("")}
-          ${opcoesCartao(resto).map((x) => `<option value="cartao:${x.n}" ${PG.resto === "cartao:" + x.n ? "selected" : ""}>Cartão de crédito em ${x.n}x de ${reais(x.parcela)}${x.n > 1 ? (x.semJuros ? " sem juros" : " (total " + reais(x.total) + ", com juros)") : ""}</option>`).join("")}
-        </select></label>
+        <select id="pg-resto" ${est}>${opcoesResto(resto)}</select></label>
       ${PAG_ITENS.aprovados.length ? `<p class="meta" id="pg-aviso">Ao confirmar, você aprova ${PAG_ITENS.aprovados.length === 1 ? "o item que ainda espera" : "os " + PAG_ITENS.aprovados.length + " itens que ainda esperam"} sua resposta (${reais(PAG_ITENS.valor)})${PAG_ITENS.recusados.length ? ", recusa " + (PAG_ITENS.recusados.length === 1 ? "o item marcado" : "os " + PAG_ITENS.recusados.length + " itens marcados") + " com Não quero" : ""} e escolhe a forma de pagamento acima.</p>` : ""}
       <button type="button" class="principal" id="pg-enviar">${PAG_ITENS.aprovados.length || PAG_ITENS.recusados.length ? "Aprovar e confirmar pagamento" : "Enviar forma de pagamento"}</button>
       <p class="erro" id="pg-erro" role="alert"></p>
     </section>`;
 }
 
+/** Opções do "Como vai pagar": à vista e, com a bandeira escolhida, o cartão em cada parcela. */
+function opcoesResto(resto) {
+  const cartao = opcoesCartao(resto);
+  return `<option value="">Escolha…</option>` +
+    ["Pix", "Dinheiro", "Cartão de débito"].map((o) => `<option value="vista:${o}" ${PG.resto === "vista:" + o ? "selected" : ""}>À vista no ${o}: ${reais(resto)}</option>`).join("") +
+    (cartao.length ? cartao.map((x) => `<option value="cartao:${x.n}" ${PG.resto === "cartao:" + x.n ? "selected" : ""}>Cartão de crédito em ${textoCartao(x)}</option>`).join("")
+      : bandeirasLink().length ? `<option value="" disabled>Cartão de crédito: escolha a bandeira acima</option>` : "");
+}
+
 function ligarPagamento(base) {
-  const ent = $("pg-entrada"), res = $("pg-resto"), bt = $("pg-enviar");
+  const ent = $("pg-entrada"), res = $("pg-resto"), bt = $("pg-enviar"), band = $("pg-bandeira");
   if (!res || !bt) return;
   if (ent) ent.addEventListener("change", (e) => (PG.entrada = e.target.value));
   res.addEventListener("change", (e) => (PG.resto = e.target.value));
+  // 5.48: trocou a bandeira -> as parcelas do cartão são recalculadas na hora com a taxa dela.
+  if (band) band.addEventListener("change", (e) => {
+    PG.bandeira = e.target.value;
+    const pg = dados.pagamento || {};
+    const perc = Number(pg.entrada_perc || 0);
+    const resto = centavos(base - (perc > 0 ? centavos(base * perc / 100) : 0));
+    if (PG.resto.startsWith("cartao:") && !opcoesCartao(resto).some((o) => "cartao:" + o.n === PG.resto)) PG.resto = "";
+    res.innerHTML = opcoesResto(resto);
+  });
   bt.addEventListener("click", async () => {
     const pg = dados.pagamento || {};
     const perc = Number(pg.entrada_perc || 0);
@@ -183,8 +225,9 @@ function ligarPagamento(base) {
       Object.assign(p, { restante_forma: valor, parcelas: 1, valor_parcela: resto, total: base });
     } else {
       const x = opcoesCartao(resto).find((o) => String(o.n) === valor);
-      restoTxt = x.n > 1 ? `${reais(x.total)} no cartão de crédito em ${x.n}x de ${reais(x.parcela)}${x.semJuros ? " sem juros" : " com juros"}` : `${reais(resto)} no cartão de crédito à vista`;
-      Object.assign(p, { restante_forma: "Cartão de crédito", parcelas: x.n, valor_parcela: x.parcela, total: centavos(entrada + x.total) });
+      if (!x) return ($("pg-erro").textContent = "Escolha a bandeira e as parcelas do cartão de novo");
+      restoTxt = `${reais(x.total)} no cartão de crédito${PG.bandeira ? " " + PG.bandeira : ""} em ${x.n}x de ${reais(x.parcela)}${x.semJuros ? " sem juros" : " com juros"}`;
+      Object.assign(p, { restante_forma: "Cartão de crédito", parcelas: x.n, valor_parcela: x.parcela, total: centavos(entrada + x.total), bandeira: PG.bandeira || "" });
     }
     // 5.42: o que a página mostrou e as escolhas; o servidor aprova, confere o orçamento e recalcula o total.
     if (PAG_ITENS.mostrados.length) Object.assign(p, {
