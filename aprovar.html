@@ -100,7 +100,7 @@
 <footer>Dúvidas sobre algum item? Fale com a oficina pelo WhatsApp antes de responder.</footer>
 
 <script>
-const VERSAO_PAGINA = "aprovar 5.42";
+const VERSAO_PAGINA = "aprovar 5.50";
 const SUPABASE = "https://sgzcsdsdjuspcdaxxggb.supabase.co";
 const CHAVE = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNnemNzZHNkanVzcGNkYXh4Z2diIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI4NjI0MTUsImV4cCI6MjEwODQzODQxNX0.0LobydfLKEfC9XZdBGOIN88ycAapcEosOxLHa3rz1Yg";
 const $ = (id) => document.getElementById(id);
@@ -164,7 +164,9 @@ function secaoPagamento(base) {
   return `
     <section class="cartao">
       <h2>Forma de pagamento</h2>
-      ${escolha && escolha.resumo ? `<div class="ok" role="status">Você escolheu: ${esc(escolha.resumo)}. Pode mudar abaixo.</div>` : ""}
+      ${escolha && escolha.resumo ? `<div class="ok" role="status">${escolha.alterado_pela_oficina_em
+        ? `Forma de pagamento alterada pela oficina em ${esc(String(escolha.alterado_pela_oficina_em).slice(8, 10) + "/" + String(escolha.alterado_pela_oficina_em).slice(5, 7))}: ${esc(escolha.resumo.replace(" (alterado pela oficina)", ""))}`
+        : `Você escolheu: ${esc(escolha.resumo)}`}. Pode mudar abaixo.</div>` : ""}
       ${perc > 0 ? `
         <p class="meta">Este serviço pede uma entrada de ${perc.toLocaleString("pt-BR")}% para começar.</p>
         <div class="linha"><span>Entrada (${perc.toLocaleString("pt-BR")}%)</span><span>${reais(entrada)}</span></div>
@@ -314,6 +316,11 @@ function normalizar(d) {
 }
 
 function etiqueta(l) {
+  // 5.50: o banco novo manda o texto da decisão (ex.: "Incluído pela oficina após falar com você").
+  if (l.status !== "pendente" && l.situacao_texto) {
+    const cls = l.status === "recusado" ? "e-rec" : l.status === "aprovado_cliente" ? "e-cli" : "e-ofi";
+    return `<span class="etiqueta ${cls}">${esc(l.situacao_texto)}</span>`;
+  }
   switch (l.status) {
     case "pendente": return `<span class="etiqueta e-pend">Aguardando sua resposta</span>`;
     case "aprovado_cliente": return `<span class="etiqueta e-cli">Aprovado por você</span>`;
