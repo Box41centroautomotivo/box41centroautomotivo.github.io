@@ -46,6 +46,9 @@
   .tipo { color: var(--suave); font-size: .8rem; }
   tfoot td { font-weight: 700; border-bottom: 0; border-top: 2px solid var(--borda); }
   .riscado .nome, .riscado td.n { text-decoration: line-through; color: var(--suave); }
+  tr.grupo td { background: var(--cartao2); border-top: 2px solid var(--laranja); }
+  tr.grupo .escolha { max-width: 320px; }
+  tr.no-grupo td:first-child { border-left: 3px solid var(--laranja); }
   .normal-riscado { text-decoration: line-through; color: var(--suave); font-weight: 400; margin-right: 6px; }
   .etiqueta { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: .78rem; font-weight: 700; color: #000; white-space: nowrap; }
   .e-pend { background: var(--amarelo); } .e-cli { background: var(--verde); } .e-ofi { background: var(--azul); } .e-rec { background: var(--vermelho); }
@@ -100,7 +103,7 @@
 <footer>Dúvidas sobre algum item? Fale com a oficina pelo WhatsApp antes de responder.</footer>
 
 <script>
-const VERSAO_PAGINA = "aprovar 5.50";
+const VERSAO_PAGINA = "aprovar 5.51";
 const SUPABASE = "https://sgzcsdsdjuspcdaxxggb.supabase.co";
 const CHAVE = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNnemNzZHNkanVzcGNkYXh4Z2diIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI4NjI0MTUsImV4cCI6MjEwODQzODQxNX0.0LobydfLKEfC9XZdBGOIN88ycAapcEosOxLHa3rz1Yg";
 const $ = (id) => document.getElementById(id);
@@ -329,15 +332,44 @@ function etiqueta(l) {
   }
 }
 
-function linhaTabela(l, n) {
-  const pend = l.status === "pendente" && dados.pode_aprovar;
+// 5.51: cabeçalho do grupo (peças e serviços que dependem um do outro): uma resposta só para o grupo todo.
+function cabecalhoGrupo(id, nome, linhas) {
+  const pendentes = linhas.filter((l) => l.status === "pendente");
+  const pode = pendentes.length && dados.pode_aprovar;
+  const todosSim = pode && pendentes.every((l) => resposta[l.id] === true);
+  const todosNao = pode && pendentes.every((l) => resposta[l.id] === false);
+  const total = linhas.filter((l) => l.status !== "recusado").reduce((s, l) => s + Number(l.liquido), 0);
+  return `<tr class="grupo"><td colspan="8"><b>Grupo: ${esc(nome)}</b> · ${linhas.length} itens · ${reais(total)}
+    <div class="meta">Estes itens dependem um do outro: a resposta vale para o grupo todo.</div>
+    ${pode ? `<div class="escolha" role="group" aria-label="Resposta para o grupo ${esc(nome)}">
+      <button type="button" class="sim" aria-pressed="${todosSim}" data-grupo="${id}" data-v="1">Aprovo o grupo</button>
+      <button type="button" class="nao" aria-pressed="${todosNao}" data-grupo="${id}" data-v="0">Não quero o grupo</button>
+    </div>` : ""}</td></tr>`;
+}
+
+function linhasTabela() {
+  const vistos = new Set();
+  let n = 0;
+  return dados.linhas.map((l) => {
+    let html = "";
+    if (l.grupo_id && !vistos.has(l.grupo_id)) {
+      vistos.add(l.grupo_id);
+      html += cabecalhoGrupo(l.grupo_id, l.grupo_nome || "", dados.linhas.filter((x) => x.grupo_id === l.grupo_id));
+    }
+    return html + linhaTabela(l, ++n, !!l.grupo_id);
+  }).join("");
+}
+
+function linhaTabela(l, n, emGrupo) {
+  const pend = l.status === "pendente" && dados.pode_aprovar && !emGrupo;
   const naoQuer = pend && resposta[l.id] === false;
   const gratis = l.situacao && l.situacao !== "normal";
   const rotuloGratis = l.situacao === "garantia" ? "Garantia" : "Cortesia";
   const liquido = gratis
     ? `${l.valor_normal ? `<span class="normal-riscado">${reais(l.valor_normal)}</span>` : ""}${rotuloGratis} ${reais(0)}`
     : reais(l.liquido);
-  return `<tr class="${l.status === "recusado" || naoQuer ? "riscado" : ""}">
+  const naoQuerGrupo = emGrupo && l.status === "pendente" && resposta[l.id] === false;
+  return `<tr class="${[l.status === "recusado" || naoQuer || naoQuerGrupo ? "riscado" : "", emGrupo ? "no-grupo" : ""].join(" ")}">
     <td class="num">#${n}</td>
     <td><div class="nome">${esc(l.descricao)}</div><div class="tipo">${l.tipo === "S" ? "Serviço" : l.tipo === "P" ? "Produto" : ""}</div></td>
     <td class="n" data-rotulo="Quantidade">${qtd(l.quantidade)}</td>
@@ -402,7 +434,7 @@ function mostrar(msg) {
       <table>
         <thead><tr><th>#</th><th>Item</th><th class="n">Quantidade</th><th class="n">Valor unitário</th><th class="n">Valor bruto</th>
           <th class="n">Desconto</th><th class="n">Valor líquido</th><th>Status</th></tr></thead>
-        <tbody>${dados.linhas.map((l, i) => linhaTabela(l, i + 1)).join("")}</tbody>
+        <tbody>${linhasTabela()}</tbody>
         <tfoot><tr>
           <td class="vazio"></td><td>Total de itens ${t.itens}</td><td class="vazio"></td><td class="vazio"></td>
           <td class="n" data-rotulo="Valor bruto">${reais(t.bruto)}</td>
@@ -440,7 +472,11 @@ function mostrar(msg) {
   const motivoAntes = window.__motivo || "";
   if ($("motivo")) { $("motivo").value = motivoAntes; $("motivo").addEventListener("input", (e) => (window.__motivo = e.target.value)); }
   c.querySelectorAll(".escolha button").forEach((b) => b.addEventListener("click", () => {
-    resposta[b.dataset.id] = b.dataset.v === "1";
+    if (b.dataset.grupo) {
+      // 5.51: a resposta do grupo vale para todos os itens pendentes dele.
+      dados.linhas.filter((l) => String(l.grupo_id) === b.dataset.grupo && l.status === "pendente")
+        .forEach((l) => (resposta[l.id] = b.dataset.v === "1"));
+    } else resposta[b.dataset.id] = b.dataset.v === "1";
     mostrar();
   }));
   const todos = $("todos");
