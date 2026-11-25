@@ -100,10 +100,11 @@
   <div id="carregando" class="cartao">Carregando os itens da sua OS…</div>
   <div id="conteudo" hidden></div>
 </main>
-<footer>Dúvidas sobre algum item? Fale com a oficina pelo WhatsApp antes de responder.</footer>
+<footer>Dúvidas sobre algum item? Fale com a oficina pelo WhatsApp antes de responder.
+  <div class="nao-imprimir" style="margin-top:8px"><a href="./" style="color:var(--laranja)">Ver o andamento das suas OS (Acompanhe sua OS)</a></div></footer>
 
 <script>
-const VERSAO_PAGINA = "aprovar 5.51";
+const VERSAO_PAGINA = "aprovar 5.52";
 const SUPABASE = "https://sgzcsdsdjuspcdaxxggb.supabase.co";
 const CHAVE = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNnemNzZHNkanVzcGNkYXh4Z2diIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI4NjI0MTUsImV4cCI6MjEwODQzODQxNX0.0LobydfLKEfC9XZdBGOIN88ycAapcEosOxLHa3rz1Yg";
 const $ = (id) => document.getElementById(id);
@@ -114,7 +115,7 @@ const dataBr = (s) => { if (!s) return ""; const [d, h] = String(s).replace("T",
 const token = new URLSearchParams(location.search).get("t") || "";
 let dados = null, resposta = {};
 // 5.40: forma de pagamento escolhida pelo cliente (fica guardada entre uma tela e outra).
-const PG = { entrada: "", resto: "", bandeira: "" };
+const PG = { entrada: "", resto: "", bandeira: "", entradaParc: "" };
 const centavos = (v) => Math.round(v * 100) / 100;
 // 5.42: escolher o pagamento aprova os itens que ainda esperam resposta (menos os marcados "Não quero").
 let PAG_ITENS = { mostrados: [], aprovados: [], recusados: [], valor: 0 };
@@ -177,7 +178,10 @@ function secaoPagamento(base) {
           <select id="pg-entrada" ${est}>
             <option value="">Escolha…</option>
             ${["Pix", "Dinheiro", "Cartão de débito", "Cartão de crédito à vista"].map((o) => `<option ${PG.entrada === o ? "selected" : ""}>${o}</option>`).join("")}
-          </select></label>` : ""}
+            ${bandeirasLink().length ? `<option value="Cartão de crédito" ${PG.entrada === "Cartão de crédito" ? "selected" : ""}>Cartão de crédito parcelado</option>` : ""}
+          </select></label>
+        ${PG.entrada === "Cartão de crédito" ? `<label>Parcelas da entrada no cartão
+          <select id="pg-entrada-parc" ${est}>${opcoesEntrada(entrada)}</select></label>` : ""}` : ""}
       <div class="linha"><span>${perc > 0 ? "Restante" : "Total"}</span><span>${reais(resto)}</span></div>
       ${bandeirasLink().length ? `
         <label>Bandeira do cartão de crédito (para ver as parcelas)
@@ -193,6 +197,14 @@ function secaoPagamento(base) {
     </section>`;
 }
 
+/** 5.52: parcelas da entrada no cartão de crédito (mesma bandeira e mesma regra do restante). */
+function opcoesEntrada(entrada) {
+  const cartao = opcoesCartao(entrada);
+  if (!cartao.length) return `<option value="" disabled selected>Escolha a bandeira do cartão abaixo</option>`;
+  return `<option value="">Escolha…</option>` +
+    cartao.map((x) => `<option value="${x.n}" ${PG.entradaParc === String(x.n) ? "selected" : ""}>${textoCartao(x)}</option>`).join("");
+}
+
 /** Opções do "Como vai pagar": à vista e, com a bandeira escolhida, o cartão em cada parcela. */
 function opcoesResto(resto) {
   const cartao = opcoesCartao(resto);
@@ -205,7 +217,10 @@ function opcoesResto(resto) {
 function ligarPagamento(base) {
   const ent = $("pg-entrada"), res = $("pg-resto"), bt = $("pg-enviar"), band = $("pg-bandeira");
   if (!res || !bt) return;
-  if (ent) ent.addEventListener("change", (e) => (PG.entrada = e.target.value));
+  // 5.52: entrada no cartão parcelado mostra as parcelas da entrada (a tela é refeita).
+  if (ent) ent.addEventListener("change", (e) => { PG.entrada = e.target.value; if (PG.entrada !== "Cartão de crédito") PG.entradaParc = ""; mostrar(); });
+  const entParc = $("pg-entrada-parc");
+  if (entParc) entParc.addEventListener("change", (e) => (PG.entradaParc = e.target.value));
   res.addEventListener("change", (e) => (PG.resto = e.target.value));
   // 5.48: trocou a bandeira -> as parcelas do cartão são recalculadas na hora com a taxa dela.
   if (band) band.addEventListener("change", (e) => {
@@ -215,6 +230,8 @@ function ligarPagamento(base) {
     const resto = centavos(base - (perc > 0 ? centavos(base * perc / 100) : 0));
     if (PG.resto.startsWith("cartao:") && !opcoesCartao(resto).some((o) => "cartao:" + o.n === PG.resto)) PG.resto = "";
     res.innerHTML = opcoesResto(resto);
+    const ep = $("pg-entrada-parc");
+    if (ep) { const entrada = centavos(base * perc / 100); if (!opcoesCartao(entrada).some((o) => String(o.n) === PG.entradaParc)) PG.entradaParc = ""; ep.innerHTML = opcoesEntrada(entrada); }
   });
   bt.addEventListener("click", async () => {
     const pg = dados.pagamento || {};
@@ -222,23 +239,28 @@ function ligarPagamento(base) {
     const entrada = perc > 0 ? centavos(base * perc / 100) : 0;
     const resto = centavos(base - entrada);
     if (perc > 0 && !PG.entrada) return ($("pg-erro").textContent = "Escolha como vai pagar a entrada");
+    // 5.52: entrada no cartão parcelado: bandeira e parcelas.
+    const xe = perc > 0 && PG.entrada === "Cartão de crédito" ? opcoesCartao(entrada).find((o) => String(o.n) === PG.entradaParc) : null;
+    if (perc > 0 && PG.entrada === "Cartão de crédito" && !xe) return ($("pg-erro").textContent = "Escolha a bandeira e as parcelas da entrada no cartão");
     if (!PG.resto) return ($("pg-erro").textContent = "Escolha como vai pagar" + (perc > 0 ? " o restante" : ""));
     const [tipo, valor] = PG.resto.split(":");
     let restoTxt, p = { entrada_forma: perc > 0 ? PG.entrada : "", entrada_valor: perc > 0 ? entrada : "" };
     if (tipo === "vista") {
       restoTxt = `${reais(resto)} à vista no ${valor}`;
-      Object.assign(p, { restante_forma: valor, parcelas: 1, valor_parcela: resto, total: base });
+      Object.assign(p, { restante_forma: valor, parcelas: 1, valor_parcela: resto, total: centavos((xe ? xe.total : entrada) + resto) });
     } else {
       const x = opcoesCartao(resto).find((o) => String(o.n) === valor);
       if (!x) return ($("pg-erro").textContent = "Escolha a bandeira e as parcelas do cartão de novo");
       restoTxt = `${reais(x.total)} no cartão de crédito${PG.bandeira ? " " + PG.bandeira : ""} em ${x.n}x de ${reais(x.parcela)}${x.semJuros ? " sem juros" : " com juros"}`;
-      Object.assign(p, { restante_forma: "Cartão de crédito", parcelas: x.n, valor_parcela: x.parcela, total: centavos(entrada + x.total), bandeira: PG.bandeira || "" });
+      Object.assign(p, { restante_forma: "Cartão de crédito", parcelas: x.n, valor_parcela: x.parcela, total: centavos((xe ? xe.total : entrada) + x.total), bandeira: PG.bandeira || "" });
     }
     // 5.42: o que a página mostrou e as escolhas; o servidor aprova, confere o orçamento e recalcula o total.
     if (PAG_ITENS.mostrados.length) Object.assign(p, {
       mostrados: PAG_ITENS.mostrados, aprovados: PAG_ITENS.aprovados, recusados: PAG_ITENS.recusados, total_mostrado: centavos(base),
     });
-    p.resumo = perc > 0 ? `entrada de ${reais(entrada)} (${perc.toLocaleString("pt-BR")}%) no ${PG.entrada}; restante ${restoTxt}` : restoTxt;
+    if (xe) Object.assign(p, { entrada_bandeira: PG.bandeira, entrada_parcelas: xe.n, entrada_total: xe.total });
+    const entradaTxt = xe ? `no cartão de crédito ${PG.bandeira} em ${textoCartao(xe)}` : `no ${PG.entrada}`;
+    p.resumo = perc > 0 ? `entrada de ${reais(entrada)} (${perc.toLocaleString("pt-BR")}%) ${entradaTxt}; restante ${restoTxt}` : restoTxt;
     const textoBotao = bt.textContent;
     bt.disabled = true; bt.textContent = "Enviando…";
     try {
